@@ -371,6 +371,31 @@ export default function App() {
     ];
   }, [stats, columns.length, activeSheet]);
 
+  // ── Manager summary (per-manager stats from ALL filtered rows) ──────────
+  const managerSummary = useMemo(() => {
+    if (!managerColumn) return [];
+    const map = {};
+    filtered.forEach((row) => {
+      const mgr = String(row[managerColumn] || "").trim();
+      if (!mgr) return;
+      if (!map[mgr]) map[mgr] = { name: mgr, total: 0, converted: 0, callBooked: 0, showup: 0 };
+      map[mgr].total += 1;
+      if (convertedColumn) {
+        const v = String(row[convertedColumn] || "").trim().toLowerCase();
+        if (v === "yes" || v === "y" || v === "true" || v === "1") map[mgr].converted += 1;
+      }
+      if (callBookedColumn) {
+        const v = String(row[callBookedColumn] || "").trim().toLowerCase();
+        if (v === "yes" || v === "y" || v === "true" || v === "1") map[mgr].callBooked += 1;
+      }
+      if (showupCallColumn) {
+        const v = String(row[showupCallColumn] || "").trim().toLowerCase();
+        if (v === "yes" || v === "y" || v === "true" || v === "1") map[mgr].showup += 1;
+      }
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  }, [filtered, managerColumn, convertedColumn, callBookedColumn, showupCallColumn]);
+
   const appSelect = {
     padding:"8px 36px 8px 12px", borderRadius:8,
     border:"1px solid rgba(255,255,255,0.12)",
@@ -407,16 +432,92 @@ export default function App() {
       </div>
 
       <div style={s.main}>
-        {/* ── Stat cards ── */}
-        <div style={s.statsGrid}>
-          {statCards.map((st) => (
-            <div key={st.label} style={s.statCard}>
-              <div style={s.statIcon}>{st.icon}</div>
-              <div style={s.statValue}>{loading ? "—" : st.value}</div>
-              <div style={s.statLabel}>{st.label}</div>
+
+        {/* ── Manager Summary Cards (when Managed By column exists) ── */}
+        {managerColumn && managerSummary.length > 0 ? (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 11, color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.6px", fontWeight: 500, marginBottom: 10 }}>
+              👤 Manager Summary — {managerSummary.length} manager{managerSummary.length > 1 ? "s" : ""} · {filtered.length} total leads
             </div>
-          ))}
-        </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              {loading ? (
+                [1,2,3,4].map(i => (
+                  <div key={i} style={{ ...s.mgrCard, opacity: 0.4 }}>
+                    <div style={s.mgrName}>—</div>
+                  </div>
+                ))
+              ) : managerSummary.map((mgr) => {
+                const convRate = mgr.total > 0 ? Math.round((mgr.converted / mgr.total) * 100) : 0;
+                const isFiltered = filterManager === mgr.name;
+                return (
+                  <div
+                    key={mgr.name}
+                    onClick={() => setFilterManager(isFiltered ? "All" : mgr.name)}
+                    style={{
+                      ...s.mgrCard,
+                      borderColor: isFiltered ? "rgba(99,179,237,0.6)" : "rgba(255,255,255,0.07)",
+                      background: isFiltered ? "rgba(99,179,237,0.08)" : "rgba(255,255,255,0.03)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={s.mgrName}>
+                      <span style={{ fontSize: 15 }}>👤</span>
+                      <span style={s.mgrNameText}>{mgr.name}</span>
+                      {isFiltered && <span style={{ fontSize: 10, color: "#63b3ed", whiteSpace:"nowrap" }}>● active</span>}
+                    </div>
+                    <div style={s.mgrTotal}>{mgr.total}</div>
+                    <div style={{ fontSize: 11, color: "#718096", marginBottom: 10, letterSpacing:"0.3px" }}>total leads</div>
+                    <div style={s.mgrStats}>
+                      {callBookedColumn && (
+                        <div style={s.mgrStat}>
+                          <span>📞</span>
+                          <span style={{ ...s.mgrStatVal, color:"#63b3ed" }}>{mgr.callBooked}</span>
+                          <span style={s.mgrStatLbl}>calls</span>
+                        </div>
+                      )}
+                      {showupCallColumn && (
+                        <div style={s.mgrStat}>
+                          <span>🎯</span>
+                          <span style={{ ...s.mgrStatVal, color:"#f6ad55" }}>{mgr.showup}</span>
+                          <span style={s.mgrStatLbl}>show-up</span>
+                        </div>
+                      )}
+                      {convertedColumn && (
+                        <div style={s.mgrStat}>
+                          <span>✅</span>
+                          <span style={{ ...s.mgrStatVal, color:"#48bb78" }}>{mgr.converted}</span>
+                          <span style={s.mgrStatLbl}>converted</span>
+                        </div>
+                      )}
+                    </div>
+                    {convertedColumn && (
+                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems:"center", fontSize: 11, color: "#718096", marginBottom: 5 }}>
+                          <span>Conversion rate</span>
+                          <span style={{ color: convRate >= 50 ? "#48bb78" : convRate >= 25 ? "#f6ad55" : "#fc8181", fontWeight: 700, fontSize:13 }}>{convRate}%</span>
+                        </div>
+                        <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,0.06)" }}>
+                          <div style={{ height: "100%", borderRadius: 3, width: `${convRate}%`, background: convRate >= 50 ? "#48bb78" : convRate >= 25 ? "#f6ad55" : "#fc8181", transition: "width 0.4s ease" }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          /* ── Default Stat cards (when no manager column) ── */
+          <div style={s.statsGrid}>
+            {statCards.map((st) => (
+              <div key={st.label} style={s.statCard}>
+                <div style={s.statIcon}>{st.icon}</div>
+                <div style={s.statValue}>{loading ? "—" : st.value}</div>
+                <div style={s.statLabel}>{st.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* ── Filter bar trigger + chips ── */}
         <div style={s.filterBar}>
@@ -683,6 +784,14 @@ const s = {
   refreshBtn: { padding:"8px 16px", borderRadius:8, border:"1px solid rgba(255,255,255,0.15)", background:"transparent", color:"#a0aec0", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif" },
   main:       { padding:"24px 28px" },
   statsGrid:  { display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, marginBottom:24 },
+  mgrCard:    { background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:14, padding:"18px 20px", transition:"border-color 0.2s, background 0.2s", minWidth:0 },
+  mgrName:    { fontSize:14, fontWeight:600, color:"#e2e8f0", marginBottom:8, display:"flex", alignItems:"center", gap:6, overflow:"hidden" },
+  mgrNameText:{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 },
+  mgrTotal:   { fontSize:36, fontWeight:700, color:"#63b3ed", fontFamily:"'DM Mono',monospace", lineHeight:1, marginBottom:2 },
+  mgrStats:   { display:"flex", gap:14, marginTop:6, flexWrap:"wrap" },
+  mgrStat:    { display:"flex", alignItems:"center", gap:4, fontSize:12, background:"rgba(255,255,255,0.04)", borderRadius:6, padding:"3px 8px" },
+  mgrStatVal: { color:"#e2e8f0", fontWeight:600, fontFamily:"'DM Mono',monospace" },
+  mgrStatLbl: { color:"#718096" },
   statCard:   { background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, padding:20, textAlign:"center" },
   statIcon:   { fontSize:24, marginBottom:8 },
   statValue:  { fontSize:28, fontWeight:600, color:"#e2e8f0", fontFamily:"'DM Mono',monospace" },
