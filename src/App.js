@@ -11,12 +11,18 @@ import { rowMatchesSearch, findColumn } from "./utils/sheetData";
 
 const REFRESH_MS = Number(process.env.REACT_APP_REFRESH_MS) || 5000;
 
-const MANAGER_ALIASES    = ["managed by","manager","managed_by","team lead","team_lead","lead","handled by","assigned to","owner"];
+const MANAGER_ALIASES    = ["managed by","manager","managed_by","managedby","managed_by_name","team lead","team_lead","teamlead","lead","handled by","assigned to","owner","reporting to","reports to","supervisor","incharge","in charge"];
 const UNIVERSITY_ALIASES = ["university","college","institution","school","institute","university name","college name"];
 const ID_ALIASES         = ["id","sr no","sr. no","s.no","s no","serial no","serial number","no.","no","employee id","emp id","lead id","row id"];
 const BOOKING_ID_ALIASES = ["booking id","booking_id","bookingid","booking no","booking number","booking ref","reference id","ref id","reservation id"];
 const SOURCE_ALIASES     = ["source","lead source","lead_source","channel","referral","utm source","origin","platform","medium"];
 const NAME_ALIASES       = ["name","full name","fullname","full_name","candidate name","client name","customer name","contact name","person name","first name","student name"];
+const SHOWUP_MSG_ALIASES = ["showup messaging process","showup messaging","show up messaging","messaging process","showup msg"];
+const CALL_BOOKED_ALIASES= ["call booked","call booked - y/n","call booked y/n","booked call","booking call"];
+const SHOWUP_CALL_ALIASES= ["show-up on call","showup on call","show up on call","showed up","show up call","showup call"];
+const CONVERTED_ALIASES  = ["converted","conversion","is converted","deal closed","closed"];
+const DATE_CONTACT_ALIASES=["date of contact","contact date","date contacted","contacted on","date"];
+const CALL_DATE_ALIASES  = ["call date","date of call","scheduled date","appointment date"];
 
 const PERIOD_OPTIONS = [
   { id: "all", label: "All Time" },
@@ -107,6 +113,7 @@ export default function App() {
   const [activeSheet, setActiveSheet] = useState(null);
   const [tabsLoading, setTabsLoading] = useState(true);
   const [loading, setLoading]         = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // ── All filters ──────────────────────────────────────────────────────────
   const [search,         setSearch]         = useState("");
@@ -116,6 +123,10 @@ export default function App() {
   const [filterSource,   setFilterSource]   = useState("All");
   const [filterName,     setFilterName]     = useState("All");
   const [filterBookingId,setFilterBookingId]= useState("");
+  const [filterShowupMsg,  setFilterShowupMsg]  = useState("All");
+  const [filterCallBooked, setFilterCallBooked] = useState("All");
+  const [filterShowupCall, setFilterShowupCall] = useState("All");
+  const [filterConverted,  setFilterConverted]  = useState("All");
   const [period,         setPeriod]         = useState("all");
   const [sortBy,         setSortBy]         = useState("id-asc");
 
@@ -129,6 +140,8 @@ export default function App() {
     setSearch(""); setFilterDept("All"); setFilterManager("All");
     setFilterUniversity("All"); setFilterSource("All");
     setFilterName("All"); setFilterBookingId("");
+    setFilterShowupMsg("All"); setFilterCallBooked("All");
+    setFilterShowupCall("All"); setFilterConverted("All");
     setPeriod("all"); setSortBy("id-asc");
   };
 
@@ -218,8 +231,23 @@ export default function App() {
   // ── Column detection ────────────────────────────────────────────────────
   const deptColumn       = useMemo(() => findColumn(columns, HR_COLUMNS.department), [columns]);
   const dateColumn       = useMemo(() => findColumn(columns, HR_COLUMNS.joinDate),   [columns]);
-  const managerColumn    = useMemo(() => findColumn(columns, MANAGER_ALIASES),        [columns]);
   const universityColumn = useMemo(() => findColumn(columns, UNIVERSITY_ALIASES),     [columns]);
+
+  // Manager column — exact match first, then partial match fallback
+  // This ensures "Managed By", "Manager", "Reporting To" etc. are ALL caught
+  const managerColumn = useMemo(() => {
+    const exact = findColumn(columns, MANAGER_ALIASES);
+    if (exact) return exact;
+    return columns.find((c) => {
+      const n = c.trim().toLowerCase();
+      return n.includes("manag") || n.includes("reporting") || n.includes("supervisor");
+    }) || null;
+  }, [columns]);
+
+  const showupMsgColumn  = useMemo(() => findColumn(columns, SHOWUP_MSG_ALIASES),  [columns]);
+  const callBookedColumn = useMemo(() => findColumn(columns, CALL_BOOKED_ALIASES), [columns]);
+  const showupCallColumn = useMemo(() => findColumn(columns, SHOWUP_CALL_ALIASES), [columns]);
+  const convertedColumn  = useMemo(() => findColumn(columns, CONVERTED_ALIASES),   [columns]);
   const idColumn         = useMemo(() => findColumn(columns, ID_ALIASES),             [columns]);
   const bookingIdColumn  = useMemo(() => findColumn(columns, BOOKING_ID_ALIASES),     [columns]);
   const sourceColumn     = useMemo(() => findColumn(columns, SOURCE_ALIASES),         [columns]);
@@ -233,10 +261,11 @@ export default function App() {
     return ["All", ...new Set(periodFiltered.map((r) => r[deptColumn]).filter(Boolean))];
   }, [periodFiltered, deptColumn]);
 
+  // Use ALL rows (not periodFiltered) so manager list is always full regardless of period filter
   const managers = useMemo(() => {
     if (!managerColumn) return [];
-    return ["All", ...[...new Set(periodFiltered.map((r) => String(r[managerColumn]||"").trim()).filter(Boolean))].sort()];
-  }, [periodFiltered, managerColumn]);
+    return ["All", ...[...new Set(rows.map((r) => String(r[managerColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, managerColumn]);
 
   const universities = useMemo(() => {
     if (!universityColumn) return [];
@@ -253,6 +282,27 @@ export default function App() {
     return ["All", ...[...new Set(periodFiltered.map((r) => String(r[nameColumn]||"").trim()).filter(Boolean))].sort()];
   }, [periodFiltered, nameColumn]);
 
+  // Y/N style dropdowns — always use ALL rows so options never disappear
+  const showupMsgOptions  = useMemo(() => {
+    if (!showupMsgColumn)  return [];
+    return ["All", ...[...new Set(rows.map((r) => String(r[showupMsgColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, showupMsgColumn]);
+
+  const callBookedOptions = useMemo(() => {
+    if (!callBookedColumn) return [];
+    return ["All", ...[...new Set(rows.map((r) => String(r[callBookedColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, callBookedColumn]);
+
+  const showupCallOptions = useMemo(() => {
+    if (!showupCallColumn) return [];
+    return ["All", ...[...new Set(rows.map((r) => String(r[showupCallColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, showupCallColumn]);
+
+  const convertedOptions  = useMemo(() => {
+    if (!convertedColumn)  return [];
+    return ["All", ...[...new Set(rows.map((r) => String(r[convertedColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, convertedColumn]);
+
   // ── Filtered + sorted rows ─────────────────────────────────────────────
   const filtered = useMemo(() => {
     const list = periodFiltered.filter((row) => {
@@ -264,6 +314,10 @@ export default function App() {
       if (nameColumn       && filterName       !== "All" && String(row[nameColumn]||"").trim()       !== filterName)       return false;
       if (bookingIdColumn  && filterBookingId.trim() &&
           !String(row[bookingIdColumn]||"").toLowerCase().includes(filterBookingId.trim().toLowerCase())) return false;
+      if (showupMsgColumn  && filterShowupMsg  !== "All" && String(row[showupMsgColumn]||"").trim()  !== filterShowupMsg)  return false;
+      if (callBookedColumn && filterCallBooked !== "All" && String(row[callBookedColumn]||"").trim() !== filterCallBooked) return false;
+      if (showupCallColumn && filterShowupCall !== "All" && String(row[showupCallColumn]||"").trim() !== filterShowupCall) return false;
+      if (convertedColumn  && filterConverted  !== "All" && String(row[convertedColumn]||"").trim()  !== filterConverted)  return false;
       return true;
     });
     if ((sortBy === "id-asc" || sortBy === "id-desc") && idColumn) {
@@ -276,7 +330,9 @@ export default function App() {
     return sortRows(list, columns, sortBy);
   }, [periodFiltered, columns, search, filterDept, deptColumn, filterManager, managerColumn,
       filterUniversity, universityColumn, filterSource, sourceColumn, filterName, nameColumn,
-      filterBookingId, bookingIdColumn, idColumn, sortBy]);
+      filterBookingId, bookingIdColumn, idColumn, sortBy,
+      filterShowupMsg, showupMsgColumn, filterCallBooked, callBookedColumn,
+      filterShowupCall, showupCallColumn, filterConverted, convertedColumn]);
 
   // ── Active filter chips list ───────────────────────────────────────────
   const activeFilters = useMemo(() => {
@@ -288,35 +344,19 @@ export default function App() {
     if (filterUniversity !== "All")   chips.push({ key:"university", icon:FILTER_ICONS.university,label:"University", value: filterUniversity, clear:()=>setFilterUniversity("All") });
     if (filterSource !== "All")       chips.push({ key:"source",     icon:FILTER_ICONS.source,    label:"Source",     value: filterSource,     clear:()=>setFilterSource("All") });
     if (filterName !== "All")         chips.push({ key:"name",       icon:FILTER_ICONS.name,      label:"Name",       value: filterName,       clear:()=>setFilterName("All") });
-    if (filterBookingId.trim())       chips.push({ key:"bookingId",  icon:FILTER_ICONS.bookingId, label:"Booking ID", value: filterBookingId,  clear:()=>setFilterBookingId("") });
-    if (search.trim())                chips.push({ key:"search",     icon:"🔍",                   label:"Search",     value: search,           clear:()=>setSearch("") });
+    if (filterBookingId.trim())       chips.push({ key:"bookingId",   icon:FILTER_ICONS.bookingId,  label:"Booking ID",   value: filterBookingId,    clear:()=>setFilterBookingId("") });
+    if (filterShowupMsg  !== "All")   chips.push({ key:"showupMsg",   icon:"💬",                    label:"Messaging",    value: filterShowupMsg,    clear:()=>setFilterShowupMsg("All") });
+    if (filterCallBooked !== "All")   chips.push({ key:"callBooked",  icon:"📞",                    label:"Call Booked",  value: filterCallBooked,   clear:()=>setFilterCallBooked("All") });
+    if (filterShowupCall !== "All")   chips.push({ key:"showupCall",  icon:"🎯",                    label:"Show-up Call", value: filterShowupCall,   clear:()=>setFilterShowupCall("All") });
+    if (filterConverted  !== "All")   chips.push({ key:"converted",   icon:"✅",                    label:"Converted",    value: filterConverted,    clear:()=>setFilterConverted("All") });
+    if (search.trim())                chips.push({ key:"search",      icon:"🔍",                    label:"Search",       value: search,             clear:()=>setSearch("") });
     return chips;
-  }, [period, sortBy, filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId, search]);
+  }, [period, sortBy, filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId,
+      filterShowupMsg, filterCallBooked, filterShowupCall, filterConverted, search]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
   const stats = useMemo(() => computeStatsFromList(filtered, columns), [filtered, columns]);
-
-  // Manager-count KPI cards (one per manager, sorted by count desc)
-  const managerKpiCards = useMemo(() => {
-    if (!managerColumn) return null;
-    const map = {};
-    filtered.forEach((row) => {
-      const mgr = String(row[managerColumn] || "").trim() || "(Unassigned)";
-      map[mgr] = (map[mgr] || 0) + 1;
-    });
-    return Object.entries(map)
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => ({ label: name, value: count, icon: "👤" }));
-  }, [filtered, managerColumn]);
-
   const statCards = useMemo(() => {
-    // If we have manager data, show manager KPI cards + a total card
-    if (managerKpiCards && managerKpiCards.length > 0) {
-      return [
-        { label: "Total Rows", value: filtered.length, icon: "📋" },
-        ...managerKpiCards,
-      ];
-    }
     if (stats.isHr) return [
       { label:"Total Rows",   value: stats.total,      icon:"👥" },
       { label:"Active",       value: stats.active ?? "—", icon:"✅" },
@@ -329,7 +369,7 @@ export default function App() {
       { label:"Sheet",        value: activeSheet || "—",          icon:"📑" },
       { label:"Filled Cells", value: stats.filledCells ?? "—",   icon:"✏️" },
     ];
-  }, [stats, columns.length, activeSheet, managerKpiCards, filtered.length]);
+  }, [stats, columns.length, activeSheet]);
 
   const appSelect = {
     padding:"8px 36px 8px 12px", borderRadius:8,
@@ -368,7 +408,7 @@ export default function App() {
 
       <div style={s.main}>
         {/* ── Stat cards ── */}
-        <div style={{ ...s.statsGrid, gridTemplateColumns: `repeat(auto-fit, minmax(160px, 1fr))` }}>
+        <div style={s.statsGrid}>
           {statCards.map((st) => (
             <div key={st.label} style={s.statCard}>
               <div style={s.statIcon}>{st.icon}</div>
@@ -378,11 +418,11 @@ export default function App() {
           ))}
         </div>
 
-        {/* ── Inline Filters (always visible) ── */}
-        <div style={s.inlineFilters}>
+        {/* ── Filter bar trigger + chips ── */}
+        <div style={s.filterBar}>
           {/* Search */}
-          <div style={{ position:"relative", flex:"2 1 200px", minWidth:180 }}>
-            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#4a5568", fontSize:14, pointerEvents:"none" }}>🔍</span>
+          <div style={{ position:"relative", flex:1, minWidth:220 }}>
+            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#4a5568", fontSize:15, pointerEvents:"none" }}>🔍</span>
             <input
               placeholder="Search all columns..."
               value={search}
@@ -391,108 +431,187 @@ export default function App() {
             />
           </div>
 
-          {/* Sheet selector */}
-          {!tabsLoading && sheetTabs.length > 0 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>📋 Sheet</span>
-              <select style={appSelect} value={activeSheet||""} onChange={(e)=>switchSheet(e.target.value)}>
-                {sheetTabs.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-          )}
+          {/* Filter button */}
+          <button
+            onClick={() => setFiltersOpen((o) => !o)}
+            style={{ ...s.filterToggleBtn, ...(filtersOpen || activeFilters.length > 0 ? s.filterToggleBtnActive : {}) }}
+          >
+            <span style={{ fontSize:15 }}>⚙</span>
+            Filters
+            {activeFilters.length > 0 && (
+              <span style={s.filterBadge}>{activeFilters.length}</span>
+            )}
+            <span style={{ marginLeft:2, fontSize:10, opacity:0.6 }}>{filtersOpen ? "▲" : "▼"}</span>
+          </button>
 
-          {/* Manager */}
-          {managers.length > 1 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>👤 Managed By</span>
-              <select style={{ ...appSelect, borderColor: filterManager!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
-                value={filterManager} onChange={(e)=>setFilterManager(e.target.value)}>
-                {managers.map((m) => <option key={m} value={m}>{m==="All"?"All Managers":m}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* University */}
-          {universities.length > 1 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>🎓 University</span>
-              <select style={{ ...appSelect, borderColor: filterUniversity!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
-                value={filterUniversity} onChange={(e)=>setFilterUniversity(e.target.value)}>
-                {universities.map((u) => <option key={u} value={u}>{u==="All"?"All Universities":u}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Source */}
-          {sources.length > 1 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>📡 Source</span>
-              <select style={{ ...appSelect, borderColor: filterSource!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
-                value={filterSource} onChange={(e)=>setFilterSource(e.target.value)}>
-                {sources.map((src) => <option key={src} value={src}>{src==="All"?"All Sources":src}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Name */}
-          {names.length > 1 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>🙍 Name</span>
-              <select style={{ ...appSelect, borderColor: filterName!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
-                value={filterName} onChange={(e)=>setFilterName(e.target.value)}>
-                {names.map((n) => <option key={n} value={n}>{n==="All"?"All Names":n}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Booking ID */}
-          {bookingIdColumn && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>🔖 Booking ID</span>
-              <div style={{ position:"relative" }}>
-                <input
-                  placeholder="Search booking ID…"
-                  value={filterBookingId}
-                  onChange={(e)=>setFilterBookingId(e.target.value)}
-                  style={{ ...appSelect, paddingRight: filterBookingId ? 30 : 12, cursor:"text", appearance:"none", backgroundImage:"none", width:"100%", boxSizing:"border-box" }}
-                />
-                {filterBookingId && (
-                  <button onClick={()=>setFilterBookingId("")}
-                    style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#718096", cursor:"pointer", fontSize:13 }}>✕</button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Period */}
-          {dateColumn && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>📅 Period</span>
-              <select style={appSelect} value={period} onChange={(e)=>setPeriod(e.target.value)}>
-                {PERIOD_OPTIONS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Dept */}
-          {departments.length > 1 && (
-            <div style={s.filterItem}>
-              <span style={s.filterItemLabel}>🏢 Department</span>
-              <select style={{ ...appSelect, borderColor: filterDept!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
-                value={filterDept} onChange={(e)=>setFilterDept(e.target.value)}>
-                {departments.map((d) => <option key={d} value={d}>{d==="All"?"All Departments":d}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* ── Row count + reset ── */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-          <span style={{ fontSize:12, color:"#4a5568" }}>{filtered.length} of {rows.length} rows match</span>
+          {/* Clear all */}
           {activeFilters.length > 0 && (
-            <button onClick={resetFilters} style={s.clearBtn}>✕ Reset all filters</button>
+            <button onClick={resetFilters} style={s.clearBtn}>✕ Clear all</button>
           )}
         </div>
+
+        {/* ── Active filter chips ── */}
+        {activeFilters.length > 0 && (
+          <div style={s.chipsRow}>
+            {activeFilters.map((f) => (
+              <FilterChip key={f.key} icon={f.icon} label={f.label} value={f.value} onRemove={f.clear} />
+            ))}
+          </div>
+        )}
+
+        {/* ── Expandable filter panel ── */}
+        {filtersOpen && (
+          <div style={s.filterPanel}>
+            <div style={s.filterPanelGrid}>
+
+              {/* Sheet selector */}
+              {(tabsLoading || sheetTabs.length > 0) && (
+                <FilterRow label="Sheet" icon="📋">
+                  {tabsLoading ? (
+                    <span style={{ fontSize:12, color:"#718096" }}>Loading…</span>
+                  ) : (
+                    <select style={appSelect} value={activeSheet||""} onChange={(e)=>switchSheet(e.target.value)}>
+                      {sheetTabs.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  )}
+                </FilterRow>
+              )}
+
+              {/* Period */}
+              {dateColumn && (
+                <FilterRow label="Period" icon={FILTER_ICONS.period}>
+                  <select style={appSelect} value={period} onChange={(e)=>setPeriod(e.target.value)}>
+                    {PERIOD_OPTIONS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Sort */}
+              <FilterRow label="Sort By" icon={FILTER_ICONS.sort}>
+                <select style={appSelect} value={sortBy} onChange={(e)=>setSortBy(e.target.value)}>
+                  {SORT_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </FilterRow>
+
+              {/* Manager — shows whenever column detected, even single manager */}
+              {managerColumn && managers.length > 0 && (
+                <FilterRow label={managerColumn} icon={FILTER_ICONS.manager}>
+                  <select style={{ ...appSelect, borderColor: filterManager!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterManager} onChange={(e)=>setFilterManager(e.target.value)}>
+                    {managers.map((m) => <option key={m} value={m}>{m==="All"?`All (${managers.length - 1})`:m}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* University */}
+              {universities.length > 1 && (
+                <FilterRow label="University" icon={FILTER_ICONS.university}>
+                  <select style={{ ...appSelect, borderColor: filterUniversity!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterUniversity} onChange={(e)=>setFilterUniversity(e.target.value)}>
+                    {universities.map((u) => <option key={u} value={u}>{u==="All"?"All Universities":u}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Source */}
+              {sources.length > 1 && (
+                <FilterRow label="Source" icon={FILTER_ICONS.source}>
+                  <select style={{ ...appSelect, borderColor: filterSource!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterSource} onChange={(e)=>setFilterSource(e.target.value)}>
+                    {sources.map((src) => <option key={src} value={src}>{src==="All"?"All Sources":src}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Name */}
+              {names.length > 1 && (
+                <FilterRow label="Name" icon={FILTER_ICONS.name}>
+                  <select style={{ ...appSelect, borderColor: filterName!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterName} onChange={(e)=>setFilterName(e.target.value)}>
+                    {names.map((n) => <option key={n} value={n}>{n==="All"?"All Names":n}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Booking ID */}
+              {bookingIdColumn && (
+                <FilterRow label="Booking ID" icon={FILTER_ICONS.bookingId}>
+                  <div style={{ position:"relative", flex:1 }}>
+                    <input
+                      placeholder="Search booking ID…"
+                      value={filterBookingId}
+                      onChange={(e)=>setFilterBookingId(e.target.value)}
+                      style={{ ...appSelect, paddingRight: filterBookingId ? 30 : 12, cursor:"text", appearance:"none", backgroundImage:"none" }}
+                    />
+                    {filterBookingId && (
+                      <button onClick={()=>setFilterBookingId("")}
+                        style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#718096", cursor:"pointer", fontSize:13 }}>✕</button>
+                    )}
+                  </div>
+                </FilterRow>
+              )}
+
+              {/* Dept */}
+              {departments.length > 1 && (
+                <FilterRow label="Department" icon={FILTER_ICONS.dept}>
+                  <select style={{ ...appSelect, borderColor: filterDept!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterDept} onChange={(e)=>setFilterDept(e.target.value)}>
+                    {departments.map((d) => <option key={d} value={d}>{d==="All"?"All Departments":d}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Showup Messaging Process */}
+              {showupMsgOptions.length > 0 && (
+                <FilterRow label="Messaging Process" icon="💬">
+                  <select style={{ ...appSelect, borderColor: filterShowupMsg!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterShowupMsg} onChange={(e)=>setFilterShowupMsg(e.target.value)}>
+                    {showupMsgOptions.map((v) => <option key={v} value={v}>{v==="All"?"All":v}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Call Booked */}
+              {callBookedOptions.length > 0 && (
+                <FilterRow label="Call Booked" icon="📞">
+                  <select style={{ ...appSelect, borderColor: filterCallBooked!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterCallBooked} onChange={(e)=>setFilterCallBooked(e.target.value)}>
+                    {callBookedOptions.map((v) => <option key={v} value={v}>{v==="All"?"All":v}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Show-up On Call */}
+              {showupCallOptions.length > 0 && (
+                <FilterRow label="Show-up On Call" icon="🎯">
+                  <select style={{ ...appSelect, borderColor: filterShowupCall!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterShowupCall} onChange={(e)=>setFilterShowupCall(e.target.value)}>
+                    {showupCallOptions.map((v) => <option key={v} value={v}>{v==="All"?"All":v}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Converted */}
+              {convertedOptions.length > 0 && (
+                <FilterRow label="Converted" icon="✅">
+                  <select style={{ ...appSelect, borderColor: filterConverted!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterConverted} onChange={(e)=>setFilterConverted(e.target.value)}>
+                    {convertedOptions.map((v) => <option key={v} value={v}>{v==="All"?"All":v}</option>)}
+                  </select>
+                </FilterRow>
+              )}
+
+            </div>
+
+            {/* Panel footer */}
+            <div style={s.filterPanelFooter}>
+              <span style={{ fontSize:12, color:"#4a5568" }}>
+                {filtered.length} of {rows.length} rows match
+              </span>
+              <button onClick={resetFilters} style={s.clearBtn}>✕ Reset all filters</button>
+            </div>
+          </div>
+        )}
 
         {/* ── Charts ── */}
         {!loading && <DashboardCharts rows={filtered} columns={columns} period={period} />}
@@ -570,10 +689,20 @@ const s = {
   statLabel:  { fontSize:12, color:"#718096", marginTop:4, textTransform:"uppercase", letterSpacing:"0.5px" },
 
   // filter bar
-  inlineFilters: { display:"flex", alignItems:"flex-end", gap:10, marginBottom:14, flexWrap:"wrap", background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, padding:"14px 16px" },
-  filterItem: { display:"flex", flexDirection:"column", gap:4, flex:"1 1 140px", minWidth:130 },
-  filterItemLabel: { fontSize:11, color:"#718096", fontWeight:500, textTransform:"uppercase", letterSpacing:"0.4px" },
-  searchInput:{ flex:"2 1 200px", minWidth:180, padding:"10px 16px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#e2e8f0", fontSize:14, fontFamily:"'DM Sans',sans-serif", outline:"none" },
+  filterBar:  { display:"flex", alignItems:"center", gap:10, marginBottom:10, flexWrap:"wrap" },
+  searchInput:{ flex:1, minWidth:220, padding:"10px 16px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#e2e8f0", fontSize:14, fontFamily:"'DM Sans',sans-serif", outline:"none" },
+  filterToggleBtn: { display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:8, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.04)", color:"#a0aec0", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" },
+  filterToggleBtnActive: { background:"rgba(59,130,246,0.12)", borderColor:"rgba(59,130,246,0.4)", color:"#63b3ed" },
+  filterBadge:{ marginLeft:4, background:"#3b82f6", color:"#fff", borderRadius:10, fontSize:10, fontWeight:700, padding:"1px 6px", lineHeight:"16px" },
+  clearBtn:   { padding:"8px 14px", borderRadius:8, border:"1px solid rgba(252,129,129,0.25)", background:"rgba(252,129,129,0.06)", color:"#fc8181", cursor:"pointer", fontSize:12, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" },
+
+  // chips
+  chipsRow:   { display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 },
+
+  // filter panel
+  filterPanel: { background:"rgba(13,20,34,0.95)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, padding:"4px 20px 0", marginBottom:20, backdropFilter:"blur(8px)" },
+  filterPanelGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(260px,1fr))", gap:"0 24px" },
+  filterPanelFooter: { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderTop:"1px solid rgba(255,255,255,0.06)", marginTop:4 },
 
   // table
   tableWrap:   { background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, overflow:"hidden" },

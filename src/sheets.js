@@ -139,15 +139,27 @@ function buildSheetDataFromTable(cols, tableRows) {
   return { columns, rows };
 }
 
+function looksLikeHeader(row) {
+  if (!row || row.length === 0) return false;
+  // A header row typically has mostly text (not numbers/dates) and no empty leading cell
+  const nonEmpty = row.filter((c) => String(c ?? "").trim() !== "");
+  if (nonEmpty.length === 0) return false;
+  // If >60% cells are non-numeric strings, treat as header
+  const textCells = nonEmpty.filter((c) => isNaN(Number(String(c).replace(/[,/-]/g, ""))));
+  return textCells.length / nonEmpty.length > 0.6;
+}
+
 function buildSheetDataFromValues(values) {
   if (!values?.length) return { columns: [], rows: [] };
 
-  // Find the best header row: the one with the most non-empty cells
+  // Row 0 is ALWAYS the header when fetched via Sheets API (?headers=1 for gviz too).
+  // Only fall back to scanning if row 0 is empty/blank.
   let headerRowIndex = 0;
-  let maxFilled = 0;
-  for (let i = 0; i < Math.min(5, values.length); i++) {
-    const filled = values[i].filter((c) => String(c ?? "").trim() !== "").length;
-    if (filled > maxFilled) { maxFilled = filled; headerRowIndex = i; }
+  if (!looksLikeHeader(values[0])) {
+    // Scan first 5 rows for the first one that looks like a header
+    for (let i = 1; i < Math.min(5, values.length); i++) {
+      if (looksLikeHeader(values[i])) { headerRowIndex = i; break; }
+    }
   }
 
   // Find the maximum number of columns across ALL rows (not just header row)
