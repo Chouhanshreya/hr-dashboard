@@ -135,7 +135,7 @@ function isMonthTab(name) {
 }
 
 // ─── KPI Table for one month ──────────────────────────────────────────────────
-function MonthKpiTable({ monthName, kpi, loading, error }) {
+function MonthKpiTable({ monthName, kpi, loading, error, filterWeek = "all" }) {
   const headerCols = [
     { key: "week",          label: monthName,           color: "#e2e8f0" },
     { key: "total",         label: "No. of Leads",      color: "#63b3ed" },
@@ -181,7 +181,9 @@ function MonthKpiTable({ monthName, kpi, loading, error }) {
             {!loading && !kpi && !error && (
               <tr><td colSpan={headerCols.length} style={st.placeholderTd}>No data</td></tr>
             )}
-            {!loading && kpi && kpi.weekRows.map((row, i) => (
+            {!loading && kpi && kpi.weekRows
+              .filter(row => filterWeek === "all" || row.week.trim().toLowerCase() === filterWeek.trim().toLowerCase())
+              .map((row, i) => (
               <tr key={i} style={st.dataRow}>
                 <td style={{ ...st.td, color: "#a0aec0", fontWeight: 500 }}>{row.week}</td>
                 <td style={{ ...st.tdNum, color: "#63b3ed" }}>{row.total}</td>
@@ -213,7 +215,7 @@ function MonthKpiTable({ monthName, kpi, loading, error }) {
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-export default function KpiSheetView({ sheetTabs, refreshMs = 15000 }) {
+export default function KpiSheetView({ sheetTabs, refreshMs = 0, syncKey = 0, filterMonth = "all", filterWeek = "all" }) {
   const monthTabs = useMemo(() => sheetTabs.filter(isMonthTab), [sheetTabs]);
 
   // { [tabName]: { rows, columns, loading, error } }
@@ -229,13 +231,11 @@ export default function KpiSheetView({ sheetTabs, refreshMs = 15000 }) {
     }
   }, []);
 
-  // Fetch all month tabs on mount + on interval
+  // Fetch all month tabs on mount and when syncKey changes (manual Sync Now only)
   useEffect(() => {
     if (monthTabs.length === 0) return;
     monthTabs.forEach(tab => fetchMonth(tab));
-    const iv = setInterval(() => monthTabs.forEach(tab => fetchMonth(tab)), refreshMs);
-    return () => clearInterval(iv);
-  }, [monthTabs.join(",")]); // eslint-disable-line
+  }, [monthTabs.join(","), syncKey]); // eslint-disable-line
 
   // Compute KPI per month
   const kpiMap = useMemo(() => {
@@ -247,6 +247,11 @@ export default function KpiSheetView({ sheetTabs, refreshMs = 15000 }) {
     });
     return result;
   }, [dataMap]);
+
+  // Filter to only the selected month tab, or show all
+  const visibleTabs = filterMonth === "all"
+    ? monthTabs
+    : monthTabs.filter(t => t.trim().toLowerCase() === filterMonth.trim().toLowerCase());
 
   if (monthTabs.length === 0) {
     return (
@@ -261,17 +266,18 @@ export default function KpiSheetView({ sheetTabs, refreshMs = 15000 }) {
       <div style={st.topBar}>
         <div style={st.heading}>📊 KPI Dashboard</div>
         <div style={st.subheading}>
-          Auto-computed from {monthTabs.join(", ")} · refreshes every {refreshMs / 1000}s
+          Auto-computed from {monthTabs.join(", ")} · click ↻ Sync Now to refresh
         </div>
       </div>
 
-      {monthTabs.map(tab => (
+      {visibleTabs.map(tab => (
         <MonthKpiTable
           key={tab}
           monthName={tab}
           kpi={kpiMap[tab] || null}
           loading={dataMap[tab]?.loading ?? true}
           error={dataMap[tab]?.error ?? null}
+          filterWeek={filterWeek}
         />
       ))}
     </div>

@@ -16,7 +16,8 @@ const REFRESH_MS = Number(process.env.REACT_APP_REFRESH_MS) || 5000;
 function isKpiTabName(name) {
   if (!name) return false;
   const n = name.trim().toLowerCase();
-  return n === "kpi" || n.startsWith("kpi ");
+  // Match: "kpi", "kpi sheet", "kpisheet", "kpi data", "kpi summary", etc.
+  return n === "kpi" || n.startsWith("kpi ") || n.startsWith("kpi_") || n.includes("kpi");
 }
 
 const MANAGER_ALIASES    = ["managed by","manager","managed_by","managedby","managed_by_name","team lead","team_lead","teamlead","lead","handled by","assigned to","owner","reporting to","reports to","supervisor","incharge","in charge"];
@@ -133,6 +134,7 @@ export default function App() {
   const [monthFilter,    setMonthFilter]    = useState("all");  // for data sheets (month)
 
   const [toast, setToast]             = useState(null);
+  const [kpiSyncKey, setKpiSyncKey]   = useState(0);
   const [lastRefresh, setLastRefresh] = useState(null);
   const prevHash     = useRef("");
   const prevTabsRef  = useRef([]);
@@ -220,16 +222,14 @@ export default function App() {
   }, [refreshSheetTabs, fetchAll]);
 
   useEffect(() => {
+    // Load tabs once on mount — manual Sync Now button handles re-fetching
     refreshSheetTabs();
-    const iv = setInterval(refreshSheetTabs, REFRESH_MS);
-    return () => clearInterval(iv);
   }, [refreshSheetTabs]);
 
   useEffect(() => {
+    // Load sheet data once when activeSheet changes — no auto-refresh
     if (!activeSheet) return;
     fetchAll();
-    const iv = setInterval(() => fetchAll(true), REFRESH_MS);
-    return () => clearInterval(iv);
   }, [fetchAll, activeSheet]);
 
   // ── Column detection ────────────────────────────────────────────────────
@@ -306,23 +306,21 @@ export default function App() {
   }, []);
 
   const isKpiSheet = useMemo(() => {
-    // Must be a KPI-named tab AND have the structured week/month row format
-    if (!isKpiTab) return false;
     if (!columns.length || !rows.length) return false;
     const firstCol = columns[0];
     const vals = rows.map(r => String(r[firstCol] || "").trim().toLowerCase());
-    // KPI sheet needs BOTH week rows ("week 1", "week 2") AND month name rows
+    // KPI sheet must have BOTH week rows ("week 1", "week2") AND standalone month name rows
     const weekPattern = /^week\s*\d/;
     const hasWeeks = vals.some(v => weekPattern.test(v));
     const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-    // Exact match or "month year" — avoids matching date strings like "May 12, 2025"
-    const hasMonths = vals.some(v => monthNames.some(m => v === m || v.startsWith(m + " ")));
+    // Standalone month name (exact) or "Month Year" — never a date like "May 12, 2025"
+    const hasMonths = vals.some(v => monthNames.some(m => v === m || /^[a-z]+ \d{4}$/.test(v)));
     return hasWeeks && hasMonths;
-  }, [isKpiTab, columns, rows]);
+  }, [columns, rows]);
 
   // Build unique month/week options from data sheet rows
   const dataMonthOptions = useMemo(() => {
-    if (isKpiTab || isKpiSheet || !activeDateCol) return [];
+    if (isKpiSheet || !activeDateCol) return [];
     const months = new Map();
     rows.forEach(r => {
       const d = parseDateVal(r[activeDateCol]);
@@ -335,7 +333,7 @@ export default function App() {
   }, [isKpiSheet, rows, activeDateCol]);
 
   const dataWeekOptions = useMemo(() => {
-    if (isKpiTab || isKpiSheet || !activeDateCol || monthFilter === "all") return [];
+    if (isKpiSheet || !activeDateCol || monthFilter === "all") return [];
     const weeks = new Map();
     rows.forEach(r => {
       const d = parseDateVal(r[activeDateCol]);
@@ -488,6 +486,17 @@ export default function App() {
   // KPI sheet: first column has period labels like "May", "Week 1", "Week 2", "Total"
 
 
+  // Month tabs list for KPI tab filter dropdown — derived from actual sheet tab names
+  const MONTH_NAMES_LIST = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+  const kpiTabMonths = useMemo(() => {
+    if (!isKpiTab) return [];
+    const months = sheetTabs.filter(t => {
+      const n = t.trim().toLowerCase();
+      return MONTH_NAMES_LIST.some(m => n.startsWith(m));
+    });
+    return months.length ? ["all", ...months] : [];
+  }, [isKpiTab, sheetTabs]);
+
   // Extract unique month names from KPI sheet first column
   const kpiMonths = useMemo(() => {
     if (!isKpiSheet || !columns.length) return [];
@@ -497,8 +506,8 @@ export default function App() {
       .map(r => String(r[firstCol] || "").trim())
       .filter(v => {
         const lo = v.toLowerCase();
-        // Exact month name or "Month Year" — avoid matching date strings like "May 12, 2025"
-        return monthNames.some(m => lo === m || lo.startsWith(m + " "));
+        // Only standalone month name (exact) — skip header rows, week rows, "Total"
+        return monthNames.some(m => lo === m);
       });
     return ["all", ...new Set(months)];
   }, [isKpiSheet, rows, columns]);
@@ -515,7 +524,7 @@ export default function App() {
     for (const row of rows) {
       const val = String(row[firstCol] || "").trim();
       const lo = val.toLowerCase();
-      const isMonth = monthNames.some(m => lo === m || lo.startsWith(m + " "));
+      const isMonth = monthNames.some(m => lo === m); // exact month name only
       if (isMonth) {
         inSection = val.toLowerCase().startsWith(kpiMonth.toLowerCase());
         continue;
@@ -546,7 +555,7 @@ export default function App() {
       for (const row of rows) {
         const val = String(row[firstCol] || "").trim();
         const lo = val.toLowerCase();
-        const isMonth = monthNames.some(m => lo === m || lo.startsWith(m + " "));
+        const isMonth = monthNames.some(m => lo === m); // exact month name only
         if (isMonth) {
           inSection = lo.startsWith(kpiMonth.toLowerCase());
           if (inSection) result.push(row); // include month header row
@@ -836,29 +845,29 @@ export default function App() {
                 </FilterRow>
               )}
 
-              {/* KPI Sheet Filters — Month + Week (only when KPI sheet detected) */}
-              {isKpiSheet && kpiMonths.length > 1 && (
+              {/* KPI Tab Filters — Month + Week */}
+              {isKpiTab && kpiTabMonths.length > 1 && (
                 <FilterRow label="Month" icon="🗓️">
                   <select
                     style={{ ...appSelect, borderColor: kpiMonth !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
                     value={kpiMonth}
                     onChange={(e) => { setKpiMonth(e.target.value); setKpiWeek("all"); }}
                   >
-                    {kpiMonths.map(m => (
-                      <option key={m} value={m}>{m === "all" ? `All Months (${kpiMonths.length - 1})` : m}</option>
+                    {kpiTabMonths.map(m => (
+                      <option key={m} value={m}>{m === "all" ? `All Months (${kpiTabMonths.length - 1})` : m}</option>
                     ))}
                   </select>
                 </FilterRow>
               )}
 
-              {isKpiSheet && kpiMonth !== "all" && kpiWeeks.length > 1 && (
+              {isKpiTab && kpiMonth !== "all" && (
                 <FilterRow label="Week" icon="📅">
                   <select
                     style={{ ...appSelect, borderColor: kpiWeek !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
                     value={kpiWeek}
                     onChange={(e) => setKpiWeek(e.target.value)}
                   >
-                    {kpiWeeks.map(w => (
+                    {["all","Week 1","Week 2","Week 3","Week 4","Week 5"].map(w => (
                       <option key={w} value={w}>{w === "all" ? "All Weeks" : w}</option>
                     ))}
                   </select>
@@ -1005,7 +1014,7 @@ export default function App() {
         {/* ── KPI Tab → show live-computed KPI dashboard ── */}
         {isKpiTab && (
           <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, padding:"20px 24px" }}>
-            <KpiSheetView sheetTabs={sheetTabs} refreshMs={REFRESH_MS} />
+            <KpiSheetView key={kpiSyncKey} sheetTabs={sheetTabs} refreshMs={0} syncKey={kpiSyncKey} filterMonth={kpiMonth} filterWeek={kpiWeek} />
           </div>
         )}
 

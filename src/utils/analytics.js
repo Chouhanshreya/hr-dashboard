@@ -19,40 +19,8 @@ export function parseJoinDate(str) {
     const d = new Date(Number(gviz[1]), Number(gviz[2]), Number(gviz[3]));
     return Number.isNaN(d.getTime()) ? null : d;
   }
-
-  const ddmmyyyy = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(text);
-  if (ddmmyyyy) {
-    return new Date(Number(ddmmyyyy[3]), Number(ddmmyyyy[2]) - 1, Number(ddmmyyyy[1]));
-  }
-
-  const ddmm = /^(\d{1,2})[\/\-](\d{1,2})$/.exec(text);
-  if (ddmm) {
-    const now = new Date();
-    return new Date(now.getFullYear(), Number(ddmm[2]) - 1, Number(ddmm[1]));
-  }
-
   const d = new Date(text);
   return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function isDateColumnName(name) {
-  const normalized = String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
-  const aliases = [
-    "date",
-    "date of contact",
-    "contact date",
-    "call date",
-    "date contacted",
-    "join date",
-    "joined",
-    "date joined",
-  ];
-  return aliases.some((alias) => {
-    if (alias === "date") {
-      return normalized === "date" || /\bdate\b/.test(normalized);
-    }
-    return normalized.includes(alias);
-  });
 }
 
 function startOfWeek(date) {
@@ -100,7 +68,15 @@ export function getDayLabel(date) {
  * Returns sorted array of { id, label } options.
  */
 export function buildPeriodOptions(rows, columns, mode) {
-  const dateCols = columns.filter((c) => isDateColumnName(c));
+  const dateColAliases = [
+    ...HR_COLUMNS.joinDate,
+    "date of contact", "contact date", "call date", "date contacted",
+  ];
+  // Try both date columns
+  const dateCols = columns.filter(c => {
+    const n = c.trim().toLowerCase();
+    return dateColAliases.some(a => n.includes(a.toLowerCase()));
+  });
   if (dateCols.length === 0) return [];
 
   const bucketSet = new Set();
@@ -133,7 +109,10 @@ export function filterByPeriod(rows, columns, period, periodMode, periodValue) {
 
   // New granular filter
   if (periodMode && periodMode !== "all" && periodValue && periodValue !== "all") {
-    const dateCols = columns.filter((c) => isDateColumnName(c));
+    const dateCols = columns.filter(c => {
+      const n = c.trim().toLowerCase();
+      return ["date of contact","contact date","call date","date contacted","join date","joined","date joined"].some(a => n.includes(a));
+    });
     if (dateCols.length === 0) return rows;
 
     return rows.filter(row => {
@@ -150,7 +129,10 @@ export function filterByPeriod(rows, columns, period, periodMode, periodValue) {
 
   // Legacy period filter (current week/month/year)
   const dateCol = dateCols => dateCols[0];
-  const allDateCols = columns.filter((c) => isDateColumnName(c));
+  const allDateCols = columns.filter(c => {
+    const n = c.trim().toLowerCase();
+    return ["date of contact","contact date","call date","join date","joined"].some(a => n.includes(a));
+  });
   if (allDateCols.length === 0) return rows;
 
   const now = new Date();
