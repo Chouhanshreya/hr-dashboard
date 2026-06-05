@@ -3,7 +3,7 @@ import { fetchSheetData, fetchSpreadsheetTabs } from "./sheets";
 import DashboardCharts from "./components/DashboardCharts";
 import {
   filterByPeriod,
-  sortRows,
+  buildPeriodOptions,
   computeStatsFromList,
   HR_COLUMNS,
 } from "./utils/analytics";
@@ -24,23 +24,13 @@ const CONVERTED_ALIASES  = ["converted","conversion","is converted","deal closed
 const DATE_CONTACT_ALIASES=["date of contact","contact date","date contacted","contacted on","date"];
 const CALL_DATE_ALIASES  = ["call date","date of call","scheduled date","appointment date"];
 
-const PERIOD_OPTIONS = [
-  { id: "all", label: "All Time" },
-  { id: "weekly", label: "Weekly" },
-  { id: "monthly", label: "Monthly" },
-  { id: "yearly", label: "Yearly" },
+const PERIOD_MODE_OPTIONS = [
+  { id: "all",     label: "All Time" },
+  { id: "monthly", label: "By Month" },
+  { id: "weekly",  label: "By Week" },
+  { id: "daily",   label: "By Day" },
 ];
 
-const SORT_OPTIONS = [
-  { id: "id-asc",      label: "ID ↑" },
-  { id: "id-desc",     label: "ID ↓" },
-  { id: "date-desc",   label: "Join Date ↓" },
-  { id: "date-asc",    label: "Join Date ↑" },
-  { id: "name-asc",    label: "Name A–Z" },
-  { id: "name-desc",   label: "Name Z–A" },
-  { id: "salary-desc", label: "Salary ↓" },
-  { id: "salary-asc",  label: "Salary ↑" },
-];
 
 const STATUS_COLORS = {
   Active:   { bg: "rgba(72,187,120,0.15)",  color: "#48bb78" },
@@ -122,13 +112,17 @@ export default function App() {
   const [filterUniversity, setFilterUniversity] = useState("All");
   const [filterSource,   setFilterSource]   = useState("All");
   const [filterName,     setFilterName]     = useState("All");
-  const [filterBookingId,setFilterBookingId]= useState("");
+  const [filterBookingId,setFilterBookingId]= useState("All");
   const [filterShowupMsg,  setFilterShowupMsg]  = useState("All");
   const [filterCallBooked, setFilterCallBooked] = useState("All");
   const [filterShowupCall, setFilterShowupCall] = useState("All");
   const [filterConverted,  setFilterConverted]  = useState("All");
-  const [period,         setPeriod]         = useState("all");
-  const [sortBy,         setSortBy]         = useState("id-asc");
+  const [periodMode,     setPeriodMode]     = useState("all");
+  const [periodValue,    setPeriodValue]    = useState("all");
+  const [kpiMonth,       setKpiMonth]       = useState("all");  // for KPI sheet
+  const [kpiWeek,        setKpiWeek]        = useState("all");  // for KPI sheet
+  const [weekFilter,     setWeekFilter]     = useState("all");  // for data sheets (week of month)
+  const [monthFilter,    setMonthFilter]    = useState("all");  // for data sheets (month)
 
   const [toast, setToast]             = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -141,8 +135,10 @@ export default function App() {
     setFilterUniversity("All"); setFilterSource("All");
     setFilterName("All"); setFilterBookingId("");
     setFilterShowupMsg("All"); setFilterCallBooked("All");
-    setFilterShowupCall("All"); setFilterConverted("All");
-    setPeriod("all"); setSortBy("id-asc");
+    setFilterShowupCall("All"); setFilterConverted("All"); setFilterBookingId("All");
+    setPeriodMode("all"); setPeriodValue("all");
+    setKpiMonth("all"); setKpiWeek("all");
+    setWeekFilter("all"); setMonthFilter("all");
   };
 
   const showToast = (msg, type = "success") => {
@@ -244,6 +240,39 @@ export default function App() {
     }) || null;
   }, [columns]);
 
+  const dateContactColumn= useMemo(() => findColumn(columns, DATE_CONTACT_ALIASES),[columns]);
+  const callDateColumn   = useMemo(() => findColumn(columns, CALL_DATE_ALIASES),   [columns]);
+
+  // ── Date parsing helpers (defined early — used by filtered useMemo below) ──
+  const activeDateCol = useMemo(() =>
+    dateContactColumn || callDateColumn || null,
+    [dateContactColumn, callDateColumn]
+  );
+
+  const parseDateVal = (val) => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (!s || s === "—" || s === "-") return null;
+    const ddmm = /^(\d{1,2})\/(\d{1,2})$/.exec(s);
+    if (ddmm) {
+      const now = new Date();
+      return new Date(now.getFullYear(), parseInt(ddmm[2]) - 1, parseInt(ddmm[1]));
+    }
+    const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+    if (ddmmyyyy) return new Date(parseInt(ddmmyyyy[3]), parseInt(ddmmyyyy[2])-1, parseInt(ddmmyyyy[1]));
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const getWeekMonthLabel = (date) => {
+    const weekNum = Math.ceil(date.getDate() / 7);
+    const month = date.toLocaleString("en-US", { month: "long" });
+    return `Week ${weekNum} of ${month}`;
+  };
+
+  const getMonthYearLabel = (date) =>
+    date.toLocaleString("en-US", { month: "long", year: "numeric" });
+
   const showupMsgColumn  = useMemo(() => findColumn(columns, SHOWUP_MSG_ALIASES),  [columns]);
   const callBookedColumn = useMemo(() => findColumn(columns, CALL_BOOKED_ALIASES), [columns]);
   const showupCallColumn = useMemo(() => findColumn(columns, SHOWUP_CALL_ALIASES), [columns]);
@@ -253,7 +282,58 @@ export default function App() {
   const sourceColumn     = useMemo(() => findColumn(columns, SOURCE_ALIASES),         [columns]);
   const nameColumn       = useMemo(() => findColumn(columns, NAME_ALIASES),           [columns]);
 
-  const periodFiltered = useMemo(() => filterByPeriod(rows, columns, period), [rows, columns, period]);
+  // ── KPI sheet detection (must be before dataMonthOptions) ────────────
+  const isKpiSheet = useMemo(() => {
+    if (!columns.length || !rows.length) return false;
+    const firstCol = columns[0];
+    const vals = rows.map(r => String(r[firstCol] || "").trim().toLowerCase());
+    // KPI sheet has rows like "week 1", "week2", "total", month names
+    const weekPattern = /^week\s*\d/;
+    const hasWeeks = vals.some(v => weekPattern.test(v));
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+    const hasMonths = vals.some(v => monthNames.some(m => v.startsWith(m)));
+    return hasWeeks || hasMonths;
+  }, [columns, rows]);
+
+  // Build unique month/week options from data sheet rows
+  const dataMonthOptions = useMemo(() => {
+    if (isKpiSheet || !activeDateCol) return [];
+    const months = new Map();
+    rows.forEach(r => {
+      const d = parseDateVal(r[activeDateCol]);
+      if (!d) return;
+      const label = getMonthYearLabel(d);
+      if (!months.has(label)) months.set(label, d.getFullYear() * 100 + d.getMonth());
+    });
+    const sorted = [...months.entries()].sort((a,b) => a[1]-b[1]).map(e => e[0]);
+    return sorted.length ? ["all", ...sorted] : [];
+  }, [isKpiSheet, rows, activeDateCol]);
+
+  const dataWeekOptions = useMemo(() => {
+    if (isKpiSheet || !activeDateCol || monthFilter === "all") return [];
+    const weeks = new Map();
+    rows.forEach(r => {
+      const d = parseDateVal(r[activeDateCol]);
+      if (!d) return;
+      if (getMonthYearLabel(d) !== monthFilter) return;
+      const label = getWeekMonthLabel(d);
+      const sortKey = d.getFullYear() * 10000 + d.getMonth() * 100 + Math.ceil(d.getDate()/7);
+      if (!weeks.has(label)) weeks.set(label, sortKey);
+    });
+    const sorted = [...weeks.entries()].sort((a,b) => a[1]-b[1]).map(e => e[0]);
+    return sorted.length ? ["all", ...sorted] : [];
+  }, [isKpiSheet, rows, activeDateCol, monthFilter]);
+
+  const periodFiltered = useMemo(
+    () => filterByPeriod(rows, columns, "all", periodMode, periodValue),
+    [rows, columns, periodMode, periodValue]
+  );
+
+  // Build period value options dynamically from actual data
+  const periodValueOptions = useMemo(() => {
+    if (periodMode === "all") return [];
+    return buildPeriodOptions(rows, columns, periodMode);
+  }, [rows, columns, periodMode]);
 
   // ── Dropdown option lists (unique values from ALL rows, not just filtered) ─
   const departments  = useMemo(() => {
@@ -312,46 +392,51 @@ export default function App() {
       if (universityColumn && filterUniversity !== "All" && String(row[universityColumn]||"").trim() !== filterUniversity) return false;
       if (sourceColumn     && filterSource     !== "All" && String(row[sourceColumn]||"").trim()     !== filterSource)     return false;
       if (nameColumn       && filterName       !== "All" && String(row[nameColumn]||"").trim()       !== filterName)       return false;
-      if (bookingIdColumn  && filterBookingId.trim() &&
-          !String(row[bookingIdColumn]||"").toLowerCase().includes(filterBookingId.trim().toLowerCase())) return false;
+      if (bookingIdColumn && filterBookingId !== "All" &&
+          String(row[bookingIdColumn]||"").trim() !== filterBookingId) return false;
+      // Data sheet month/week filter
+      if (!isKpiSheet && activeDateCol && (monthFilter !== "all" || weekFilter !== "all")) {
+        const d = parseDateVal(row[activeDateCol]);
+        if (!d) return false;
+        if (monthFilter !== "all" && getMonthYearLabel(d) !== monthFilter) return false;
+        if (weekFilter  !== "all" && getWeekMonthLabel(d) !== weekFilter)  return false;
+      }
       if (showupMsgColumn  && filterShowupMsg  !== "All" && String(row[showupMsgColumn]||"").trim()  !== filterShowupMsg)  return false;
       if (callBookedColumn && filterCallBooked !== "All" && String(row[callBookedColumn]||"").trim() !== filterCallBooked) return false;
       if (showupCallColumn && filterShowupCall !== "All" && String(row[showupCallColumn]||"").trim() !== filterShowupCall) return false;
       if (convertedColumn  && filterConverted  !== "All" && String(row[convertedColumn]||"").trim()  !== filterConverted)  return false;
       return true;
     });
-    if ((sortBy === "id-asc" || sortBy === "id-desc") && idColumn) {
-      return [...list].sort((a, b) => {
-        const av = parseFloat(String(a[idColumn]||"").replace(/[^0-9.-]/g,"")) || 0;
-        const bv = parseFloat(String(b[idColumn]||"").replace(/[^0-9.-]/g,"")) || 0;
-        return sortBy === "id-asc" ? av - bv : bv - av;
-      });
-    }
-    return sortRows(list, columns, sortBy);
+    return list;
   }, [periodFiltered, columns, search, filterDept, deptColumn, filterManager, managerColumn,
       filterUniversity, universityColumn, filterSource, sourceColumn, filterName, nameColumn,
-      filterBookingId, bookingIdColumn, idColumn, sortBy,
+      filterBookingId, bookingIdColumn, idColumn,
       filterShowupMsg, showupMsgColumn, filterCallBooked, callBookedColumn,
-      filterShowupCall, showupCallColumn, filterConverted, convertedColumn]);
+      filterShowupCall, showupCallColumn, filterConverted, convertedColumn,
+      monthFilter, weekFilter, activeDateCol, isKpiSheet]);
 
   // ── Active filter chips list ───────────────────────────────────────────
+
   const activeFilters = useMemo(() => {
     const chips = [];
-    if (period !== "all")             chips.push({ key:"period",     icon:FILTER_ICONS.period,    label:"Period",     value: PERIOD_OPTIONS.find(p=>p.id===period)?.label, clear:()=>setPeriod("all") });
-    if (sortBy !== "id-asc")          chips.push({ key:"sort",       icon:FILTER_ICONS.sort,      label:"Sort",       value: SORT_OPTIONS.find(s=>s.id===sortBy)?.label,   clear:()=>setSortBy("id-asc") });
+    if (periodMode !== "all" && periodValue !== "all") chips.push({ key:"period", icon:FILTER_ICONS.period, label:"Period", value: periodValue, clear:()=>{ setPeriodMode("all"); setPeriodValue("all"); } });
+    if (kpiMonth !== "all")   chips.push({ key:"kpiMonth",    icon:"🗓️", label:"Month", value: kpiMonth,    clear:()=>{ setKpiMonth("all"); setKpiWeek("all"); } });
+    if (kpiWeek   !== "all")   chips.push({ key:"kpiWeek",     icon:"📅", label:"Week",  value: kpiWeek,     clear:()=>setKpiWeek("all") });
+    if (monthFilter !== "all") chips.push({ key:"monthFilter", icon:"🗓️", label:"Month", value: monthFilter, clear:()=>{ setMonthFilter("all"); setWeekFilter("all"); } });
+    if (weekFilter  !== "all") chips.push({ key:"weekFilter",  icon:"📅", label:"Week",  value: weekFilter,  clear:()=>setWeekFilter("all") });
     if (filterDept !== "All")         chips.push({ key:"dept",       icon:FILTER_ICONS.dept,      label:"Dept",       value: filterDept,       clear:()=>setFilterDept("All") });
     if (filterManager !== "All")      chips.push({ key:"manager",    icon:FILTER_ICONS.manager,   label:"Manager",    value: filterManager,    clear:()=>setFilterManager("All") });
     if (filterUniversity !== "All")   chips.push({ key:"university", icon:FILTER_ICONS.university,label:"University", value: filterUniversity, clear:()=>setFilterUniversity("All") });
     if (filterSource !== "All")       chips.push({ key:"source",     icon:FILTER_ICONS.source,    label:"Source",     value: filterSource,     clear:()=>setFilterSource("All") });
     if (filterName !== "All")         chips.push({ key:"name",       icon:FILTER_ICONS.name,      label:"Name",       value: filterName,       clear:()=>setFilterName("All") });
-    if (filterBookingId.trim())       chips.push({ key:"bookingId",   icon:FILTER_ICONS.bookingId,  label:"Booking ID",   value: filterBookingId,    clear:()=>setFilterBookingId("") });
+    if (filterBookingId !== "All")    chips.push({ key:"bookingId",   icon:FILTER_ICONS.bookingId,  label:"Booking ID",   value: filterBookingId,    clear:()=>setFilterBookingId("All") });
     if (filterShowupMsg  !== "All")   chips.push({ key:"showupMsg",   icon:"💬",                    label:"Messaging",    value: filterShowupMsg,    clear:()=>setFilterShowupMsg("All") });
     if (filterCallBooked !== "All")   chips.push({ key:"callBooked",  icon:"📞",                    label:"Call Booked",  value: filterCallBooked,   clear:()=>setFilterCallBooked("All") });
     if (filterShowupCall !== "All")   chips.push({ key:"showupCall",  icon:"🎯",                    label:"Show-up Call", value: filterShowupCall,   clear:()=>setFilterShowupCall("All") });
     if (filterConverted  !== "All")   chips.push({ key:"converted",   icon:"✅",                    label:"Converted",    value: filterConverted,    clear:()=>setFilterConverted("All") });
     if (search.trim())                chips.push({ key:"search",      icon:"🔍",                    label:"Search",       value: search,             clear:()=>setSearch("") });
     return chips;
-  }, [period, sortBy, filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId,
+  }, [periodMode, periodValue, filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId,
       filterShowupMsg, filterCallBooked, filterShowupCall, filterConverted, search]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
@@ -370,6 +455,90 @@ export default function App() {
       { label:"Filled Cells", value: stats.filledCells ?? "—",   icon:"✏️" },
     ];
   }, [stats, columns.length, activeSheet]);
+
+  // ── KPI sheet detection ─────────────────────────────────────────────────
+  // KPI sheet: first column has period labels like "May", "Week 1", "Week 2", "Total"
+
+
+  // Extract unique month names from KPI sheet first column
+  const kpiMonths = useMemo(() => {
+    if (!isKpiSheet || !columns.length) return [];
+    const firstCol = columns[0];
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+    const months = rows
+      .map(r => String(r[firstCol] || "").trim())
+      .filter(v => {
+        const lo = v.toLowerCase();
+        return monthNames.some(m => lo.startsWith(m));
+      });
+    return ["all", ...new Set(months)];
+  }, [isKpiSheet, rows, columns]);
+
+  // Extract weeks for the selected month
+  const kpiWeeks = useMemo(() => {
+    if (!isKpiSheet || !columns.length || kpiMonth === "all") return [];
+    const firstCol = columns[0];
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+    
+    // Find rows that belong to selected month section
+    let inSection = false;
+    const weeks = [];
+    for (const row of rows) {
+      const val = String(row[firstCol] || "").trim();
+      const lo = val.toLowerCase();
+      const isMonth = monthNames.some(m => lo.startsWith(m));
+      if (isMonth) {
+        inSection = val.toLowerCase().startsWith(kpiMonth.toLowerCase());
+        continue;
+      }
+      if (inSection) {
+        const isWeek = /^week\s*\d/i.test(val);
+        const isTotal = /^total$/i.test(val);
+        if (isTotal) { inSection = false; continue; }
+        if (isWeek) weeks.push(val);
+      }
+    }
+    return ["all", ...weeks];
+  }, [isKpiSheet, rows, columns, kpiMonth]);
+
+  // KPI filtered rows
+  const kpiFiltered = useMemo(() => {
+    if (!isKpiSheet || !columns.length) return rows;
+    if (kpiMonth === "all") return rows;
+    const firstCol = columns[0];
+    const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+
+    let inSection = false;
+    const result = [];
+    for (const row of rows) {
+      const val = String(row[firstCol] || "").trim();
+      const lo = val.toLowerCase();
+      const isMonth = monthNames.some(m => lo.startsWith(m));
+      if (isMonth) {
+        inSection = val.toLowerCase().startsWith(kpiMonth.toLowerCase());
+        if (inSection) result.push(row); // include the month header row
+        continue;
+      }
+      if (inSection) {
+        const isTotal = /^total$/i.test(val);
+        if (isTotal) {
+          result.push(row); // include total row
+          inSection = false;
+          continue;
+        }
+        // Week filter
+        if (kpiWeek !== "all") {
+          if (val.toLowerCase() === kpiWeek.toLowerCase()) result.push(row);
+        } else {
+          result.push(row);
+        }
+      }
+    }
+    return result;
+  }, [isKpiSheet, rows, columns, kpiMonth, kpiWeek]);
+
+  // ── Display rows — KPI sheet uses kpiFiltered, others use filtered ────────
+  const displayRows = isKpiSheet ? kpiFiltered : filtered;
 
   // ── Manager summary (per-manager stats from ALL filtered rows) ──────────
   const managerSummary = useMemo(() => {
@@ -396,6 +565,12 @@ export default function App() {
     return Object.values(map).sort((a, b) => b.total - a.total);
   }, [filtered, managerColumn, convertedColumn, callBookedColumn, showupCallColumn]);
 
+  // Booking IDs dropdown list — all unique values from the column
+  const bookingIds = useMemo(() => {
+    if (!bookingIdColumn) return [];
+    return ["All", ...[...new Set(rows.map((r) => String(r[bookingIdColumn]||"").trim()).filter(Boolean))].sort()];
+  }, [rows, bookingIdColumn]);
+
   const appSelect = {
     padding:"8px 36px 8px 12px", borderRadius:8,
     border:"1px solid rgba(255,255,255,0.12)",
@@ -417,7 +592,7 @@ export default function App() {
       {/* ── Header ── */}
       <div style={s.header}>
         <div>
-          <div style={s.logo}>HR Dashboard</div>
+          <div style={s.logo}>Outreach Dashboard</div>
           <div style={s.subtitle}>Live from Google Sheets · New tabs appear automatically</div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -437,7 +612,7 @@ export default function App() {
         {managerColumn && managerSummary.length > 0 ? (
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 11, color: "#4a5568", textTransform: "uppercase", letterSpacing: "0.6px", fontWeight: 500, marginBottom: 10 }}>
-              👤 Manager Summary — {managerSummary.length} manager{managerSummary.length > 1 ? "s" : ""} · {filtered.length} total leads
+              👤 Manager Summary — {managerSummary.length} manager{managerSummary.length > 1 ? "s" : ""} · {displayRows.length} total leads
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
               {loading ? (
@@ -578,21 +753,88 @@ export default function App() {
                 </FilterRow>
               )}
 
-              {/* Period */}
-              {dateColumn && (
-                <FilterRow label="Period" icon={FILTER_ICONS.period}>
-                  <select style={appSelect} value={period} onChange={(e)=>setPeriod(e.target.value)}>
-                    {PERIOD_OPTIONS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              {/* Data Sheet Month + Week filters (non-KPI sheets) */}
+              {!isKpiSheet && dataMonthOptions.length > 1 && (
+                <FilterRow label="Month" icon="🗓️">
+                  <select
+                    style={{ ...appSelect, borderColor: monthFilter !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={monthFilter}
+                    onChange={(e) => { setMonthFilter(e.target.value); setWeekFilter("all"); }}
+                  >
+                    {dataMonthOptions.map(m => (
+                      <option key={m} value={m}>{m === "all" ? `All Months (${dataMonthOptions.length - 1})` : m}</option>
+                    ))}
                   </select>
                 </FilterRow>
               )}
 
-              {/* Sort */}
-              <FilterRow label="Sort By" icon={FILTER_ICONS.sort}>
-                <select style={appSelect} value={sortBy} onChange={(e)=>setSortBy(e.target.value)}>
-                  {SORT_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </FilterRow>
+              {!isKpiSheet && monthFilter !== "all" && dataWeekOptions.length > 1 && (
+                <FilterRow label="Week" icon="📅">
+                  <select
+                    style={{ ...appSelect, borderColor: weekFilter !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={weekFilter}
+                    onChange={(e) => setWeekFilter(e.target.value)}
+                  >
+                    {dataWeekOptions.map(w => (
+                      <option key={w} value={w}>{w === "all" ? `All Weeks (${dataWeekOptions.length - 1})` : w}</option>
+                    ))}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* KPI Sheet Filters — Month + Week (only when KPI sheet detected) */}
+              {isKpiSheet && kpiMonths.length > 1 && (
+                <FilterRow label="Month" icon="🗓️">
+                  <select
+                    style={{ ...appSelect, borderColor: kpiMonth !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={kpiMonth}
+                    onChange={(e) => { setKpiMonth(e.target.value); setKpiWeek("all"); }}
+                  >
+                    {kpiMonths.map(m => (
+                      <option key={m} value={m}>{m === "all" ? `All Months (${kpiMonths.length - 1})` : m}</option>
+                    ))}
+                  </select>
+                </FilterRow>
+              )}
+
+              {isKpiSheet && kpiMonth !== "all" && kpiWeeks.length > 1 && (
+                <FilterRow label="Week" icon="📅">
+                  <select
+                    style={{ ...appSelect, borderColor: kpiWeek !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={kpiWeek}
+                    onChange={(e) => setKpiWeek(e.target.value)}
+                  >
+                    {kpiWeeks.map(w => (
+                      <option key={w} value={w}>{w === "all" ? "All Weeks" : w}</option>
+                    ))}
+                  </select>
+                </FilterRow>
+              )}
+
+              {/* Period Mode + Value — only for non-KPI sheets */}
+              {!isKpiSheet && (
+                <>
+                  <FilterRow label="Period" icon={FILTER_ICONS.period}>
+                    <select style={appSelect} value={periodMode} onChange={(e)=>{ setPeriodMode(e.target.value); setPeriodValue("all"); }}>
+                      {PERIOD_MODE_OPTIONS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                  </FilterRow>
+                  {periodMode !== "all" && periodValueOptions.length > 0 && (
+                    <FilterRow label={periodMode === "monthly" ? "Month" : periodMode === "weekly" ? "Week" : "Day"} icon="📆">
+                      <select
+                        style={{ ...appSelect, borderColor: periodValue !== "all" ? "rgba(99,179,237,0.5)" : undefined }}
+                        value={periodValue}
+                        onChange={(e) => setPeriodValue(e.target.value)}
+                      >
+                        <option value="all">All {periodMode === "monthly" ? "Months" : periodMode === "weekly" ? "Weeks" : "Days"} ({periodValueOptions.length})</option>
+                        {periodValueOptions.map((o) => (
+                          <option key={o.id} value={o.id}>{o.label}</option>
+                        ))}
+                      </select>
+                    </FilterRow>
+                  )}
+                </>
+              )}
 
               {/* Manager — shows whenever column detected, even single manager */}
               {managerColumn && managers.length > 0 && (
@@ -635,20 +877,12 @@ export default function App() {
               )}
 
               {/* Booking ID */}
-              {bookingIdColumn && (
+              {bookingIds.length > 0 && (
                 <FilterRow label="Booking ID" icon={FILTER_ICONS.bookingId}>
-                  <div style={{ position:"relative", flex:1 }}>
-                    <input
-                      placeholder="Search booking ID…"
-                      value={filterBookingId}
-                      onChange={(e)=>setFilterBookingId(e.target.value)}
-                      style={{ ...appSelect, paddingRight: filterBookingId ? 30 : 12, cursor:"text", appearance:"none", backgroundImage:"none" }}
-                    />
-                    {filterBookingId && (
-                      <button onClick={()=>setFilterBookingId("")}
-                        style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"#718096", cursor:"pointer", fontSize:13 }}>✕</button>
-                    )}
-                  </div>
+                  <select style={{ ...appSelect, borderColor: filterBookingId!=="All" ? "rgba(99,179,237,0.5)" : undefined }}
+                    value={filterBookingId} onChange={(e)=>setFilterBookingId(e.target.value)}>
+                    {bookingIds.map((b) => <option key={b} value={b}>{b==="All"?`All Booking IDs (${bookingIds.length-1})`:b}</option>)}
+                  </select>
                 </FilterRow>
               )}
 
@@ -707,7 +941,7 @@ export default function App() {
             {/* Panel footer */}
             <div style={s.filterPanelFooter}>
               <span style={{ fontSize:12, color:"#4a5568" }}>
-                {filtered.length} of {rows.length} rows match
+                {displayRows.length} of {rows.length} rows match
               </span>
               <button onClick={resetFilters} style={s.clearBtn}>✕ Reset all filters</button>
             </div>
@@ -715,7 +949,7 @@ export default function App() {
         )}
 
         {/* ── Charts ── */}
-        {!loading && <DashboardCharts rows={filtered} columns={columns} period={period} />}
+        {!loading && <DashboardCharts rows={displayRows} columns={columns} period={periodMode} />}
 
         {/* ── Table ── */}
         <div style={s.tableWrap}>
@@ -723,7 +957,7 @@ export default function App() {
             <span style={s.tableTitle}>
               Data
               {activeSheet && <span style={{ color:"#63b3ed", marginLeft:6 }}>· {activeSheet}</span>}
-              {" "}<span style={{ color:"#4a5568", fontWeight:400 }}>({filtered.length} rows · {columns.length} columns)</span>
+              {" "}<span style={{ color:"#4a5568", fontWeight:400 }}>({displayRows.length} rows · {columns.length} columns)</span>
             </span>
             {(tabsLoading || sheetTabs.length > 0) && !tabsLoading && (
               <span style={{ fontSize:11, color:"#4a5568" }}>
@@ -734,7 +968,7 @@ export default function App() {
 
           {loading ? (
             <div style={s.empty}>Loading from Google Sheets...</div>
-          ) : filtered.length === 0 ? (
+          ) : displayRows.length === 0 ? (
             <div style={s.empty}>
               {rows.length === 0
                 ? `No data in "${activeSheet}". Add a header row and data in Google Sheets.`
@@ -747,7 +981,7 @@ export default function App() {
                   <tr>{columns.map((h) => <th key={h} style={s.th}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {filtered.map((row, i) => (
+                  {displayRows.map((row, i) => (
                     <tr key={i} style={s.tr}>
                       {columns.map((col) => {
                         const val = row[col];
