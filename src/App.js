@@ -306,20 +306,23 @@ export default function App() {
   }, []);
 
   const isKpiSheet = useMemo(() => {
+    // Must be a KPI-named tab AND have the structured week/month row format
+    if (!isKpiTab) return false;
     if (!columns.length || !rows.length) return false;
     const firstCol = columns[0];
     const vals = rows.map(r => String(r[firstCol] || "").trim().toLowerCase());
-    // KPI sheet has rows like "week 1", "week2", "total", month names
+    // KPI sheet needs BOTH week rows ("week 1", "week 2") AND month name rows
     const weekPattern = /^week\s*\d/;
     const hasWeeks = vals.some(v => weekPattern.test(v));
     const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
-    const hasMonths = vals.some(v => monthNames.some(m => v.startsWith(m)));
-    return hasWeeks || hasMonths;
-  }, [columns, rows]);
+    // Exact match or "month year" — avoids matching date strings like "May 12, 2025"
+    const hasMonths = vals.some(v => monthNames.some(m => v === m || v.startsWith(m + " ")));
+    return hasWeeks && hasMonths;
+  }, [isKpiTab, columns, rows]);
 
   // Build unique month/week options from data sheet rows
   const dataMonthOptions = useMemo(() => {
-    if (isKpiSheet || !activeDateCol) return [];
+    if (isKpiTab || isKpiSheet || !activeDateCol) return [];
     const months = new Map();
     rows.forEach(r => {
       const d = parseDateVal(r[activeDateCol]);
@@ -332,7 +335,7 @@ export default function App() {
   }, [isKpiSheet, rows, activeDateCol]);
 
   const dataWeekOptions = useMemo(() => {
-    if (isKpiSheet || !activeDateCol || monthFilter === "all") return [];
+    if (isKpiTab || isKpiSheet || !activeDateCol || monthFilter === "all") return [];
     const weeks = new Map();
     rows.forEach(r => {
       const d = parseDateVal(r[activeDateCol]);
@@ -347,8 +350,9 @@ export default function App() {
   }, [isKpiSheet, rows, activeDateCol, monthFilter]);
 
   const periodFiltered = useMemo(
-    () => filterByPeriod(rows, columns, "all", periodMode, periodValue),
-    [rows, columns, periodMode, periodValue]
+    // KPI tab has its own structure-based filtering — skip period filter for it
+    () => isKpiTab ? rows : filterByPeriod(rows, columns, activeDateCol, periodMode, periodValue),
+    [isKpiTab, rows, columns, activeDateCol, periodMode, periodValue]
   );
 
   // Build period value options dynamically from actual data
@@ -435,7 +439,8 @@ export default function App() {
       filterBookingId, bookingIdColumn, idColumn,
       filterShowupMsg, showupMsgColumn, filterCallBooked, callBookedColumn,
       filterShowupCall, showupCallColumn, filterConverted, convertedColumn,
-      monthFilter, weekFilter, activeDateCol, isKpiSheet]);
+      monthFilter, weekFilter, activeDateCol, isKpiSheet,
+      kpiMonth, kpiWeek]);
 
   // ── Active filter chips list ───────────────────────────────────────────
 
@@ -458,7 +463,8 @@ export default function App() {
     if (filterConverted  !== "All")   chips.push({ key:"converted",   icon:"✅",                    label:"Converted",    value: filterConverted,    clear:()=>setFilterConverted("All") });
     if (search.trim())                chips.push({ key:"search",      icon:"🔍",                    label:"Search",       value: search,             clear:()=>setSearch("") });
     return chips;
-  }, [periodMode, periodValue, filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId,
+  }, [periodMode, periodValue, kpiMonth, kpiWeek, monthFilter, weekFilter,
+      filterDept, filterManager, filterUniversity, filterSource, filterName, filterBookingId,
       filterShowupMsg, filterCallBooked, filterShowupCall, filterConverted, search]);
 
   // ── Stats ──────────────────────────────────────────────────────────────
@@ -491,7 +497,8 @@ export default function App() {
       .map(r => String(r[firstCol] || "").trim())
       .filter(v => {
         const lo = v.toLowerCase();
-        return monthNames.some(m => lo.startsWith(m));
+        // Exact month name or "Month Year" — avoid matching date strings like "May 12, 2025"
+        return monthNames.some(m => lo === m || lo.startsWith(m + " "));
       });
     return ["all", ...new Set(months)];
   }, [isKpiSheet, rows, columns]);
@@ -508,7 +515,7 @@ export default function App() {
     for (const row of rows) {
       const val = String(row[firstCol] || "").trim();
       const lo = val.toLowerCase();
-      const isMonth = monthNames.some(m => lo.startsWith(m));
+      const isMonth = monthNames.some(m => lo === m || lo.startsWith(m + " "));
       if (isMonth) {
         inSection = val.toLowerCase().startsWith(kpiMonth.toLowerCase());
         continue;
@@ -523,41 +530,66 @@ export default function App() {
     return ["all", ...weeks];
   }, [isKpiSheet, rows, columns, kpiMonth]);
 
-  // KPI filtered rows
+  // KPI filtered rows — applies month/week structure filter + all dropdown filters + search
   const kpiFiltered = useMemo(() => {
     if (!isKpiSheet || !columns.length) return rows;
-    if (kpiMonth === "all") return rows;
     const firstCol = columns[0];
     const monthNames = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 
-    let inSection = false;
-    const result = [];
-    for (const row of rows) {
-      const val = String(row[firstCol] || "").trim();
-      const lo = val.toLowerCase();
-      const isMonth = monthNames.some(m => lo.startsWith(m));
-      if (isMonth) {
-        inSection = val.toLowerCase().startsWith(kpiMonth.toLowerCase());
-        if (inSection) result.push(row); // include the month header row
-        continue;
-      }
-      if (inSection) {
-        const isTotal = /^total$/i.test(val);
-        if (isTotal) {
-          result.push(row); // include total row
-          inSection = false;
+    // Step 1: filter by month/week structure
+    let structureFiltered;
+    if (kpiMonth === "all") {
+      structureFiltered = rows;
+    } else {
+      let inSection = false;
+      const result = [];
+      for (const row of rows) {
+        const val = String(row[firstCol] || "").trim();
+        const lo = val.toLowerCase();
+        const isMonth = monthNames.some(m => lo === m || lo.startsWith(m + " "));
+        if (isMonth) {
+          inSection = lo.startsWith(kpiMonth.toLowerCase());
+          if (inSection) result.push(row); // include month header row
           continue;
         }
-        // Week filter
-        if (kpiWeek !== "all") {
-          if (val.toLowerCase() === kpiWeek.toLowerCase()) result.push(row);
-        } else {
-          result.push(row);
+        if (inSection) {
+          const isTotal = /^total$/i.test(val);
+          if (isTotal) {
+            result.push(row); // include total row
+            inSection = false;
+            continue;
+          }
+          if (kpiWeek !== "all") {
+            if (val.toLowerCase() === kpiWeek.toLowerCase()) result.push(row);
+          } else {
+            result.push(row);
+          }
         }
       }
+      structureFiltered = result;
     }
-    return result;
-  }, [isKpiSheet, rows, columns, kpiMonth, kpiWeek]);
+
+    // Step 2: apply search + dropdown filters on top
+    return structureFiltered.filter((row) => {
+      if (search && !rowMatchesSearch(row, columns, search)) return false;
+      if (deptColumn       && filterDept       !== "All" && row[deptColumn] !== filterDept) return false;
+      if (managerColumn    && filterManager    !== "All" && String(row[managerColumn]||"").trim()    !== filterManager)    return false;
+      if (universityColumn && filterUniversity !== "All" && String(row[universityColumn]||"").trim() !== filterUniversity) return false;
+      if (sourceColumn     && filterSource     !== "All" && String(row[sourceColumn]||"").trim()     !== filterSource)     return false;
+      if (nameColumn       && filterName       !== "All" && String(row[nameColumn]||"").trim()       !== filterName)       return false;
+      if (bookingIdColumn  && filterBookingId  !== "All" && String(row[bookingIdColumn]||"").trim()  !== filterBookingId)  return false;
+      if (showupMsgColumn  && filterShowupMsg  !== "All" && String(row[showupMsgColumn]||"").trim()  !== filterShowupMsg)  return false;
+      if (callBookedColumn && filterCallBooked !== "All" && String(row[callBookedColumn]||"").trim() !== filterCallBooked) return false;
+      if (showupCallColumn && filterShowupCall !== "All" && String(row[showupCallColumn]||"").trim() !== filterShowupCall) return false;
+      if (convertedColumn  && filterConverted  !== "All" && String(row[convertedColumn]||"").trim()  !== filterConverted)  return false;
+      return true;
+    });
+  }, [isKpiSheet, rows, columns, kpiMonth, kpiWeek,
+      search, filterDept, deptColumn, filterManager, managerColumn,
+      filterUniversity, universityColumn, filterSource, sourceColumn,
+      filterName, nameColumn, filterBookingId, bookingIdColumn,
+      filterShowupMsg, showupMsgColumn, filterCallBooked, callBookedColumn,
+      filterShowupCall, showupCallColumn, filterConverted, convertedColumn]);
 
   // ── Display rows — KPI sheet uses kpiFiltered, others use filtered ────────
   const displayRows = isKpiSheet ? kpiFiltered : filtered;
