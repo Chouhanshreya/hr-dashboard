@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { fetchSheetData, fetchSpreadsheetTabs } from "./sheets";
+import { fetchSheetData, fetchSpreadsheetTabs } from "./sheets.js";
 import DashboardCharts from "./components/DashboardCharts";
+import KpiSheetView from "./components/KpisheetView";
 import {
   filterByPeriod,
   buildPeriodOptions,
@@ -10,6 +11,13 @@ import {
 import { rowMatchesSearch, findColumn } from "./utils/sheetData";
 
 const REFRESH_MS = Number(process.env.REACT_APP_REFRESH_MS) || 5000;
+
+/** True when the active tab IS the KPI summary sheet (not a month data sheet) */
+function isKpiTabName(name) {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  return n === "kpi" || n.startsWith("kpi ");
+}
 
 const MANAGER_ALIASES    = ["managed by","manager","managed_by","managedby","managed_by_name","team lead","team_lead","teamlead","lead","handled by","assigned to","owner","reporting to","reports to","supervisor","incharge","in charge"];
 const UNIVERSITY_ALIASES = ["university","college","institution","school","institute","university name","college name"];
@@ -283,6 +291,20 @@ export default function App() {
   const nameColumn       = useMemo(() => findColumn(columns, NAME_ALIASES),           [columns]);
 
   // ── KPI sheet detection (must be before dataMonthOptions) ────────────
+  // ── KPI tab ────────────────────────────────────────────────────────────
+  const isKpiTab = isKpiTabName(activeSheet);
+
+  // Inject spinner keyframes once
+  useEffect(() => {
+    const id = "kpi-spin-style";
+    if (!document.getElementById(id)) {
+      const style = document.createElement("style");
+      style.id = id;
+      style.textContent = "@keyframes kpi-spin { to { transform: rotate(360deg); } }";
+      document.head.appendChild(style);
+    }
+  }, []);
+
   const isKpiSheet = useMemo(() => {
     if (!columns.length || !rows.length) return false;
     const firstCol = columns[0];
@@ -948,11 +970,18 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Charts ── */}
-        {!loading && <DashboardCharts rows={displayRows} columns={columns} period={periodMode} />}
+        {/* ── KPI Tab → show live-computed KPI dashboard ── */}
+        {isKpiTab && (
+          <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, padding:"20px 24px" }}>
+            <KpiSheetView sheetTabs={sheetTabs} refreshMs={REFRESH_MS} />
+          </div>
+        )}
 
-        {/* ── Table ── */}
-        <div style={s.tableWrap}>
+        {/* ── Charts (hidden on KPI tab) ── */}
+        {!loading && !isKpiTab && <DashboardCharts rows={displayRows} columns={columns} period={periodMode} />}
+
+        {/* ── Table (hidden on KPI tab) ── */}
+        {!isKpiTab && <div style={s.tableWrap}>
           <div style={s.tableHeader}>
             <span style={s.tableTitle}>
               Data
@@ -1002,7 +1031,7 @@ export default function App() {
               </table>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </div>
   );
