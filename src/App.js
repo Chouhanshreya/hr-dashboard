@@ -134,6 +134,7 @@ export default function App() {
   const [monthFilter,    setMonthFilter]    = useState("all");  // for data sheets (month)
 
   const [toast, setToast]             = useState(null);
+  const [isSyncing, setIsSyncing]     = useState(false);
   const [kpiSyncKey, setKpiSyncKey]   = useState(0);
   const [lastRefresh, setLastRefresh] = useState(null);
   const prevHash     = useRef("");
@@ -216,9 +217,15 @@ export default function App() {
   }, []);
 
   const handleSyncNow = useCallback(async () => {
+    setIsSyncing(true);
     setTabsLoading(true);
-    await refreshSheetTabs();
-    await fetchAll();
+    try {
+      await refreshSheetTabs();
+      await fetchAll();
+      setKpiSyncKey(k => k + 1);
+    } finally {
+      setIsSyncing(false);
+    }
   }, [refreshSheetTabs, fetchAll]);
 
   useEffect(() => {
@@ -656,7 +663,7 @@ export default function App() {
       <div style={s.header}>
         <div>
           <div style={s.logo}>Outreach Dashboard</div>
-          <div style={s.subtitle}>Live from Google Sheets · New tabs appear automatically</div>
+          <div style={s.subtitle}>Live from Google Sheets · Manual sync only</div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
           <div style={s.liveIndicator}>
@@ -665,7 +672,23 @@ export default function App() {
               ? `Last sync: ${lastRefresh.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}`
               : "Connecting..."}
           </div>
-          <button onClick={handleSyncNow} style={s.refreshBtn}>↻ Sync Now</button>
+          <button
+            onClick={handleSyncNow}
+            disabled={isSyncing}
+            style={{
+              ...s.refreshBtn,
+              opacity: isSyncing ? 0.6 : 1,
+              cursor: isSyncing ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", gap: 6,
+            }}
+          >
+            <span style={{
+              display: "inline-block",
+              animation: isSyncing ? "kpi-spin 0.8s linear infinite" : "none",
+              fontSize: 15,
+            }}>↻</span>
+            {isSyncing ? "Syncing..." : "Sync Now"}
+          </button>
         </div>
       </div>
 
