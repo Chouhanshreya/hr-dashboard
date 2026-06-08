@@ -228,6 +228,16 @@ export default function App() {
     }
   }, [refreshSheetTabs, fetchAll]);
 
+  const goHome = useCallback(() => {
+    resetFilters();
+    if (sheetTabs.length > 0) {
+      setActiveSheet(sheetTabs[0]);
+    }
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/");
+    }
+  }, [sheetTabs]);
+
   useEffect(() => {
     // Load tabs once on mount — manual Sync Now button handles re-fetching
     refreshSheetTabs();
@@ -667,6 +677,7 @@ export default function App() {
           <div style={s.subtitle}>Live from Google Sheets · Manual sync only</div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <button onClick={goHome} style={s.homeBtn}>🏠 Back to Home</button>
           <div style={s.liveIndicator}>
             <span style={s.liveDot}></span>
             {lastRefresh
@@ -1135,6 +1146,7 @@ const s = {
   filterToggleBtnActive: { background:"rgba(59,130,246,0.12)", borderColor:"rgba(59,130,246,0.4)", color:"#63b3ed" },
   filterBadge:{ marginLeft:4, background:"#3b82f6", color:"#fff", borderRadius:10, fontSize:10, fontWeight:700, padding:"1px 6px", lineHeight:"16px" },
   clearBtn:   { padding:"8px 14px", borderRadius:8, border:"1px solid rgba(252,129,129,0.25)", background:"rgba(252,129,129,0.06)", color:"#fc8181", cursor:"pointer", fontSize:12, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" },
+  homeBtn:    { padding:"9px 16px", borderRadius:8, border:"1px solid rgba(96,165,250,0.4)", background:"rgba(59,130,246,0.12)", color:"#93c5fd", cursor:"pointer", fontSize:13, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap" },
 
   // chips
   chipsRow:   { display:"flex", flexWrap:"wrap", gap:8, marginBottom:14 },
