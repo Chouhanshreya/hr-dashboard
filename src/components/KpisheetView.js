@@ -129,9 +129,10 @@ function computeKpiFromSheet(rows, columns, sheetName) {
 
 // ─── Detect which tabs are month sheets ───────────────────────────────────────
 const MONTH_NAMES = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+const MONTH_NAMES_PATTERN = new RegExp(`\\b(${MONTH_NAMES.join("|")})\\b`, "i");
 function isMonthTab(name) {
-  const n = name.trim().toLowerCase();
-  return MONTH_NAMES.some(m => n.startsWith(m));
+  const n = String(name || "").trim().toLowerCase();
+  return MONTH_NAMES_PATTERN.test(n);
 }
 
 // ─── KPI Table for one month ──────────────────────────────────────────────────

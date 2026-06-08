@@ -20,6 +20,7 @@ import {
   groupCountChart,
   isHrSheet,
 } from "../utils/analytics";
+import { findColumn } from "../utils/sheetData";
 
 const COLORS = ["#3b82f6", "#48bb78", "#f6ad55", "#fc8181", "#9f7aea", "#38b2ac", "#ed8936", "#667eea"];
 const CHART_TOOLTIP = {
@@ -27,6 +28,33 @@ const CHART_TOOLTIP = {
   labelStyle: { color: "#e2e8f0" },
   itemStyle: { color: "#a0aec0" },
 };
+
+const MANAGER_ALIASES = [
+  "managed by","manager","managed_by","managedby","managed_by_name","team lead","team_lead","teamlead","lead","handled by","assigned to","owner","reporting to","reports to","supervisor","incharge","in charge",
+];
+const BOOKING_ID_ALIASES = [
+  "booking id","booking_id","bookingid","booking no","booking number","booking ref","reference id","ref id","reservation id",
+];
+
+function bookingCountByManagerData(rows, columns) {
+  const managerCol = findColumn(columns, MANAGER_ALIASES);
+  const bookingIdCol = findColumn(columns, BOOKING_ID_ALIASES);
+  if (!managerCol || !bookingIdCol) return [];
+
+  const map = {};
+  rows.forEach((row) => {
+    const manager = String(row[managerCol] ?? "").trim() || "(unassigned)";
+    const bookingId = String(row[bookingIdCol] ?? "").trim();
+    if (!bookingId) return;
+    if (!map[manager]) map[manager] = new Set();
+    map[manager].add(bookingId);
+  });
+
+  return Object.entries(map)
+    .map(([name, ids]) => ({ name, bookings: ids.size }))
+    .sort((a, b) => b.bookings - a.bookings)
+    .slice(0, 12);
+}
 
 function ChartCard({ title, children }) {
   return (
@@ -37,13 +65,16 @@ function ChartCard({ title, children }) {
   );
 }
 
-function GenericColumnCharts({ rows, columns }) {
+function GenericColumnCharts({ rows, columns, bookingsByManagerData }) {
   const chartCols = columns
     .map((col) => ({ col, data: groupCountChart(rows, col) }))
     .filter(({ data }) => data.length > 0)
     .slice(0, 4);
 
-  if (chartCols.length === 0) {
+  const barColors = ["#3b82f6", "#48bb78", "#f6ad55", "#9f7aea"];
+
+  const noCharts = chartCols.length === 0 && bookingsByManagerData.length === 0;
+  if (noCharts) {
     return (
       <div style={styles.empty}>
         Charts need at least one column with values. Table below shows all sheet data.
@@ -51,10 +82,21 @@ function GenericColumnCharts({ rows, columns }) {
     );
   }
 
-  const barColors = ["#3b82f6", "#48bb78", "#f6ad55", "#9f7aea"];
-
   return (
     <div style={styles.grid}>
+      {bookingsByManagerData.length > 0 && (
+        <ChartCard title="Bookings by Manager">
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={bookingsByManagerData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="name" tick={{ fill: "#718096", fontSize: 10 }} />
+              <YAxis allowDecimals={false} tick={{ fill: "#718096", fontSize: 11 }} />
+              <Tooltip {...CHART_TOOLTIP} />
+              <Bar dataKey="bookings" fill="#38b2ac" radius={[6, 6, 0, 0]} name="Bookings" />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
       {chartCols.map(({ col, data }, i) => (
         <ChartCard key={col} title={`Count by ${col}`}>
           <ResponsiveContainer width="100%" height={160}>
@@ -82,6 +124,7 @@ export default function DashboardCharts({ rows, columns, period }) {
   const statusData = statusChartData(rows, columns);
   const salaryData = salaryByDeptData(rows, columns);
   const timelineData = hiresTimelineData(rows, columns, period);
+  const bookingsByManagerData = bookingCountByManagerData(rows, columns);
 
   const hasHrCharts =
     deptData.length > 0 ||
@@ -90,11 +133,25 @@ export default function DashboardCharts({ rows, columns, period }) {
     timelineData.length > 0;
 
   if (!hr || !hasHrCharts) {
-    return <GenericColumnCharts rows={rows} columns={columns} />;
+    return <GenericColumnCharts rows={rows} columns={columns} bookingsByManagerData={bookingsByManagerData} />;
   }
 
   return (
     <div style={styles.grid}>
+      {bookingsByManagerData.length > 0 && (
+        <ChartCard title="Bookings by Manager">
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={bookingsByManagerData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="name" tick={{ fill: "#718096", fontSize: 11 }} />
+              <YAxis allowDecimals={false} tick={{ fill: "#718096", fontSize: 11 }} />
+              <Tooltip {...CHART_TOOLTIP} />
+              <Bar dataKey="bookings" fill="#38b2ac" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      )}
+
       {deptData.length > 0 && (
         <ChartCard title="By Department">
           <ResponsiveContainer width="100%" height={160}>

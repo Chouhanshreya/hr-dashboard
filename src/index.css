@@ -24,7 +24,26 @@
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 
-.app-select option {
+..app-select option {
   background-color: #ffffff;
   color: #1a202c;
+}
+
+.table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.6) transparent;
+}
+
+.table-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.6);
+  border-radius: 999px;
+}
+
+.table-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }

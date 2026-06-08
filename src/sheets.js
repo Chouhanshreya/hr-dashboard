@@ -10,7 +10,8 @@ function parseSheetNameList(value) {
 
 /** Manual list only when auto-detect fails (optional fallback). */
 function getConfiguredSheetNames() {
-  const fromNames = parseSheetNameList(process.env.REACT_APP_SHEET_NAMES);
+  const namesValue = process.env.REACT_APP_SHEET_NAMES || process.env.REACT_APP_SHEET_NAME;
+  const fromNames = parseSheetNameList(namesValue);
   if (fromNames.length > 0) return fromNames;
   return null;
 }
@@ -152,13 +153,15 @@ function looksLikeHeader(row) {
 function buildSheetDataFromValues(values) {
   if (!values?.length) return { columns: [], rows: [] };
 
-  // Row 0 is ALWAYS the header when fetched via Sheets API (?headers=1 for gviz too).
-  // Only fall back to scanning if row 0 is empty/blank.
+  // Row 0 is normally the header when fetched via Sheets API (?headers=1 for gviz too).
+  // If the first row is blank or has metadata, scan a handful of rows for the first header-like row.
   let headerRowIndex = 0;
   if (!looksLikeHeader(values[0])) {
-    // Scan first 5 rows for the first one that looks like a header
-    for (let i = 1; i < Math.min(5, values.length); i++) {
-      if (looksLikeHeader(values[i])) { headerRowIndex = i; break; }
+    for (let i = 1; i < Math.min(10, values.length); i++) {
+      if (looksLikeHeader(values[i])) {
+        headerRowIndex = i;
+        break;
+      }
     }
   }
 
@@ -228,7 +231,8 @@ async function fetchSheetDataFromSheetsApi(sheetName) {
 
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/` +
-    `${sheetRange(sheetName)}?key=${encodeURIComponent(GOOGLE_API_KEY)}`;
+    `${sheetRange(sheetName)}?key=${encodeURIComponent(GOOGLE_API_KEY)}` +
+    `&majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
 
   const res = await fetch(url);
   const data = await res.json().catch(() => ({}));

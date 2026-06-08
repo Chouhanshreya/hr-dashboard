@@ -144,9 +144,9 @@ export default function App() {
   const resetFilters = () => {
     setSearch(""); setFilterDept("All"); setFilterManager("All");
     setFilterUniversity("All"); setFilterSource("All");
-    setFilterName("All"); setFilterBookingId("");
+    setFilterName("All"); setFilterBookingId("All");
     setFilterShowupMsg("All"); setFilterCallBooked("All");
-    setFilterShowupCall("All"); setFilterConverted("All"); setFilterBookingId("All");
+    setFilterShowupCall("All"); setFilterConverted("All");
     setPeriodMode("all"); setPeriodValue("all");
     setKpiMonth("all"); setKpiWeek("all");
     setWeekFilter("all"); setMonthFilter("all");
@@ -609,6 +609,7 @@ export default function App() {
 
   // ── Display rows — KPI sheet uses kpiFiltered, others use filtered ────────
   const displayRows = isKpiSheet ? kpiFiltered : filtered;
+  const isMaySheet = Boolean(activeSheet && /^may(\b|\s|\d)/i.test(activeSheet.trim()));
 
   // ── Manager summary (per-manager stats from ALL filtered rows) ──────────
   const managerSummary = useMemo(() => {
@@ -1068,8 +1069,11 @@ export default function App() {
                 : "No rows match your filters. Try adjusting or clearing them."}
             </div>
           ) : (
-            <div style={{ overflowX:"auto" }}>
-              <table style={s.table}>
+            <div className="table-scroll" style={s.tableScroll}>
+              <table style={{
+                ...s.table,
+                minWidth: !isMaySheet ? Math.max(columns.length * 140, 900) : undefined,
+              }}>
                 <thead>
                   <tr>{columns.map((h) => <th key={h} style={s.th}>{h}</th>)}</tr>
                 </thead>
@@ -1141,10 +1145,11 @@ const s = {
   filterPanelFooter: { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0", borderTop:"1px solid rgba(255,255,255,0.06)", marginTop:4 },
 
   // table
-  tableWrap:   { background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, overflow:"hidden" },
+  tableWrap:   { background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, overflow:"visible" },
   tableHeader: { padding:"14px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", alignItems:"center", justifyContent:"space-between" },
   tableTitle:  { fontSize:14, fontWeight:500, color:"#a0aec0" },
-  table:       { width:"100%", borderCollapse:"collapse" },
+  tableScroll: { maxHeight: "520px", overflowY: "scroll", overflowX: "auto", paddingBottom: 4 },
+  table:       { width:"100%", borderCollapse:"collapse", display:"table" },
   th:          { padding:"10px 16px", textAlign:"left", fontSize:11, fontWeight:500, color:"#4a5568", textTransform:"uppercase", letterSpacing:"0.6px", background:"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.06)", whiteSpace:"nowrap" },
   tr:          { borderBottom:"1px solid rgba(255,255,255,0.04)" },
   td:          { padding:"11px 16px", fontSize:13, color:"#a0aec0", whiteSpace:"nowrap" },
